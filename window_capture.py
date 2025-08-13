@@ -9,7 +9,8 @@ import win32gui
 WINDOW_TITLE_SUBSTR = "mGBA"
 FRAME_INTERVAL_MS = 50
 SHOW_PREVIEW = True
-SCALE_PREVIEW = 0.5
+SCALE_PREVIEW = 1
+DEBUG_OVERLAY_CALLBACK = None
 
 def find_window_by_title(substr: str) -> Optional[int]:
     target_hwnd = None
@@ -53,9 +54,16 @@ def capture_window(hwnd: int) -> Optional[np.ndarray]:
                     (int(width * SCALE_PREVIEW), int(height * SCALE_PREVIEW)),
                     interpolation=cv2.INTER_NEAREST,
                 )
+
+                # ---------- DRAW MANUAL DEBUG RECTANGLE HERE ----------
+                RECT_X1, RECT_Y1 =400, 200 # top-left corner
+                RECT_X2, RECT_Y2 = 100, 400  # bottom-right corner
+                cv2.rectangle(scaled, (RECT_X1, RECT_Y1), (RECT_X2, RECT_Y2), (0, 0, 255), 2)
+                # ------------------------------------------------------
+
                 cv2.imshow("mGBA Capture (debug)", scaled)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
-                    return None  # signal to stop capture loop
+                    return None  # user requested exit
             return img
     except Exception:
         return None
@@ -82,4 +90,3 @@ def run(hwnd: int, callback: Callable[[np.ndarray], None]):
     finally:
         cv2.destroyAllWindows()
         print("[+] Clean exit.")
-
