@@ -1,31 +1,26 @@
-# window_capture.py
 import time
 import cv2
 import numpy as np
-from typing import Optional, Tuple, Callable
 import mss
 import win32gui
+import threading
 
-WINDOW_TITLE_SUBSTR = "mGBA"
 FRAME_INTERVAL_MS = 50
-SHOW_PREVIEW = True
-SCALE_PREVIEW = 1
-DEBUG_OVERLAY_CALLBACK = None
 
-def find_window_by_title(substr: str) -> Optional[int]:
-    target_hwnd = None
+def find_window_by_title(substr: str):
+    hwnd = None
     substr_low = substr.lower()
-    def enum_handler(hwnd, _):
-        nonlocal target_hwnd
-        if target_hwnd is not None or not win32gui.IsWindowVisible(hwnd):
+    def enum_handler(h, _):
+        nonlocal hwnd
+        if hwnd is not None or not win32gui.IsWindowVisible(h):
             return
-        title = win32gui.GetWindowText(hwnd)
+        title = win32gui.GetWindowText(h)
         if substr_low in title.lower():
-            target_hwnd = hwnd
+            hwnd = h
     win32gui.EnumWindows(enum_handler, None)
-    return target_hwnd
+    return hwnd
 
-def get_client_rect(hwnd: int) -> Tuple[int, int, int, int]:
+def get_client_rect(hwnd):
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
     client_origin = win32gui.ClientToScreen(hwnd, (0, 0))
     left_s, top_s = client_origin
@@ -33,60 +28,53 @@ def get_client_rect(hwnd: int) -> Tuple[int, int, int, int]:
     height = bottom - top
     return left_s, top_s, left_s + width, top_s + height
 
-def capture_window(hwnd: int) -> Optional[np.ndarray]:
-    """Capture a BGR frame of the window."""
-    try:
-        # Update coordinates every frame
-        left, top, right, bottom = get_client_rect(hwnd)
-        width = right - left
-        height = bottom - top
-        if width <= 0 or height <= 0:
-            return None
-
-        with mss.mss() as sct:
-            monitor = {"top": top, "left": left, "width": width, "height": height}
-            sct_img = sct.grab(monitor)
-            img = np.array(sct_img)[:, :, :3]  # BGR
-
-            if SHOW_PREVIEW:
-                scaled = cv2.resize(
-                    img,
-                    (int(width * SCALE_PREVIEW), int(height * SCALE_PREVIEW)),
-                    interpolation=cv2.INTER_NEAREST,
-                )
-
-                # ---------- DRAW MANUAL DEBUG RECTANGLE HERE ----------
-                RECT_X1, RECT_Y1 =400, 200 # top-left corner
-                RECT_X2, RECT_Y2 = 100, 400  # bottom-right corner
-                cv2.rectangle(scaled, (RECT_X1, RECT_Y1), (RECT_X2, RECT_Y2), (0, 0, 255), 2)
-                # ------------------------------------------------------
-
-                cv2.imshow("mGBA Capture (debug)", scaled)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    return None  # user requested exit
-            return img
-    except Exception:
+def capture_window(hwnd):
+    left, top, right, bottom = get_client_rect(hwnd)
+    width, height = right-left, bottom-top
+    if width <= 0 or height <= 0:
         return None
+    with mss.mss() as sct:
+        monitor = {"top": top, "left": left, "width": width, "height": height}
+        img = np.array(sct.grab(monitor))[:, :, :3]
+        return img
 
-def run(hwnd: int, callback: Callable[[np.ndarray], None]):
-    """Main capture loop feeding frames to callback."""
-    interval = FRAME_INTERVAL_MS / 1000.0
-    prev = time.perf_counter()
-    try:
-        while True:
-            now = time.perf_counter()
-            if now - prev < interval:
-                time.sleep(max(0.0, interval - (now - prev)))
-            prev = time.perf_counter()
+def run(hwnd, callback=None):
+    """
+    Main loop for mGBA window capture and preview.
+    - callback(frame) will be called every frame if provided.
+    """
+    interval = FRAME_INTERVAL_MS / 1000
+    stop_event = threading.Event()
 
+    # Worker thread for callback processing
+    def bot_worker():
+        while not stop_event.is_set():
             frame = capture_window(hwnd)
             if frame is None:
-                # If preview returned None (user pressed 'q'), stop the loop
+                break
+            if callback:
+                callback(frame)
+            if stop_event.wait(interval):
                 break
 
-            # Feed the captured frame to the callback
-            callback(frame)
+    bot_thread = threading.Thread(target=bot_worker, daemon=True)
+    bot_thread.start()
 
+    # Preview loop in main thread
+    try:
+        while not stop_event.is_set():
+            frame = capture_window(hwnd)
+            if frame is None:
+                break
+            cv2.imshow("Preview", frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                stop_event.set()
+                break
+            if stop_event.wait(interval):
+                break
     finally:
+        stop_event.set()
+        bot_thread.join()
         cv2.destroyAllWindows()
-        print("[+] Clean exit.")
+        cv2.waitKey(1)
+        print("[+] Capture loop exited cleanly")

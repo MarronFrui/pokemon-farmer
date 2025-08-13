@@ -1,23 +1,22 @@
-from botmenu import get_bot_choice
 from window_capture import find_window_by_title, run
 import shiny_starter_farming
-
-def main():
-    choice = get_bot_choice()
-    if choice == "1":
-        print("[+] Selected bot: shiny_starter_farming")
-        bot_callback = shiny_starter_farming.shinystartermethod
-    else:
-        print("[-] Invalid selection")
-        return
-
-    hwnd = find_window_by_title("mGBA")
-    if hwnd is None:
-        print("[-] mGBA window not found.")
-        return
-
-    print(f"[*] Capturing window with HWND: {hwnd}")
-    run(hwnd, bot_callback)
+import botmenu
 
 if __name__ == "__main__":
-    main()
+    choice = botmenu.show_menu()
+    if choice != "1":
+        print("[-] Invalid selection. Exiting.")
+        exit(1)
+    print("[+] Selected bot: shiny_starter_farming")
+
+    hwnd = find_window_by_title("mGBA")
+    if not hwnd:
+        print("[-] mGBA window not found.")
+        exit(1)
+    print(f"[+] Found mGBA HWND: {hwnd}")
+
+    # Run the shinystarter sequence once
+    shiny_starter_farming.shinystartermethod(hwnd)
+
+    # Start preview loop (no bot logic in callback)
+    run(hwnd, lambda frame: None)

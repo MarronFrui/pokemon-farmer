@@ -1,166 +1,73 @@
-import cv2
-import numpy as np
-import os
+import threading
 import time
-import pyautogui
-import win32gui
+from battle_detection import start_battle_detection, get_battle_state
+import win32api
+import win32con
 
-# Rectangle coordinates for starter sprite area
-RECT_X1, RECT_Y1 = 400, 200
-RECT_X2, RECT_Y2 = 100, 400
+# Key mapping for mGBA
+VK = {
+    'A': 0x58,  # X
+    'B': 0x5A,  # Z
+    'UP': win32con.VK_UP,
+    'DOWN': win32con.VK_DOWN,
+    'LEFT': win32con.VK_LEFT,
+    'RIGHT': win32con.VK_RIGHT,
+    'RESET': win32con.VK_F1
+}
 
-NORMAL_FOLDER = os.path.join("data", "pokemon_normal")
-SHINY_FOLDER = os.path.join("data", "pokemon_shiny")
+# Startup sequence
+SEQUENCE = [
+    ('UP', 0.5),
+    ('UP', 0.5),
+    ('A', 0.1),
+    ('WAIT', 7.0),
+    ('A', 0.1),
+    ('WAIT', 1.0),
+    ('A', 0.1),
+    ('LEFT', 1.0),
+    ('WAIT', 0.5),
+    ('UP', 0.5),
+    ('A', 0.5),
+    ('A', 0.5),
+    ('A', 0.5),
+    ('WAIT', 6.0),
+    ('A', 0.1)
+]
 
-def load_templates(folder):
-    templates = []
-    for file in os.listdir(folder):
-        path = os.path.join(folder, file)
-        img = cv2.imread(path)
-        if img is not None:
-            templates.append(img)
-    return templates
-
-normal_templates = load_templates(NORMAL_FOLDER)
-shiny_templates = load_templates(SHINY_FOLDER)
-
-def activate_mgba():
-    """Brings mGBA window to foreground."""
-    hwnd = win32gui.FindWindow(None, "mGBA")
-    if hwnd:
-        win32gui.SetForegroundWindow(hwnd)
-        time.sleep(0.2)
-
-def press_key(key, duration=0.1):
-    pyautogui.keyDown(key)
+def press_key(hwnd, key, duration=0.1):
+    vk = VK.get(key.upper())
+    if vk is None:
+        raise ValueError(f"Unknown key {key}")
+    print(f"[DEBUG] Pressing key: {key} for {duration}s")  # restored debug
+    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
     time.sleep(duration)
-    pyautogui.keyUp(key)
+    win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
-def run_sequence():
-    """The movement/dialogue sequence."""
-    press_key("up", 0.8)   # move forward
-    press_key("z", 0.1)    # skip dialogue (Z is A in mGBA default)
-    press_key("left", 0.5)
-    press_key("left", 0.5)
-    press_key("left", 0.5)
-    press_key("up", 0.5)
-    press_key("z", 0.1)
-    press_key("z", 0.1)
-    press_key("z", 0.1)
+def press_sequence(hwnd, sequence):
+    for key, dur in sequence:
+        if key.upper() == "WAIT":
+            print(f"[DEBUG] Waiting for {dur}s")  # restored debug
+            time.sleep(dur)
+        else:
+            press_key(hwnd, key, dur)
+        time.sleep(0.5)  # slight delay between inputs
 
-def check_shiny(frame: np.ndarray) -> bool:
-    """Returns True if shiny detected."""
-    frame = np.ascontiguousarray(frame)
-    sprite_area = frame[RECT_Y1:RECT_Y2, RECT_X1:RECT_X2]
+def shinystartermethod(hwnd):
+    """Kick off the startup input sequence once and start battle detection."""
+    
+    if hasattr(shinystartermethod, "_started"):
+        # Already initialized
+        return
+    
+    shinystartermethod._started = True
 
-    for template in shiny_templates:
-        template_resized = cv2.resize(template, (sprite_area.shape[1], sprite_area.shape[0]))
-        res = cv2.matchTemplate(sprite_area, template_resized, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        if max_val > 0.9:
-            return True
-    return False
+    # Start battle detection in background
+    start_battle_detection(hwnd, interval=1.0)  # 1s is enough
 
-def reset_game():
-    """Sends reset hotkey to mGBA (default Ctrl+R)."""
-    pyautogui.hotkey("ctrl", "r")
-    time.sleep(1)
+    # Run startup sequence in a separate thread
+    def run_sequence():
+        print("[+] Running startup input sequence...")
+        press_sequence(hwnd, SEQUENCE)
+        print("[+] Startup sequence done.")
 
-def shinystartermethod(frame: np.ndarray):
-    """Called every frame from window_capture."""
-    # Draw debug rectangle
-    cv2.rectangle(frame, (RECT_X1, RECT_Y1), (RECT_X2, RECT_Y2), (0, 0, 255), 2)
-
-    # This runs only once per loop when we need to check
-    if check_shiny(frame):
-        print("[!!!] SHINY FOUND! [!!!]")
-        pyautogui.alert("Shiny Pokémon found!")
-        exit(0)  # stop bot
-    else:
-        print("No shiny. Resetting...")
-        reset_game()
-        time.sleep(1)
-        run_sequence()
-import cv2
-import numpy as np
-import os
-import time
-import pyautogui
-import win32gui
-
-# Rectangle coordinates for starter sprite area
-RECT_X1, RECT_Y1 = 400, 200
-RECT_X2, RECT_Y2 = 100, 400
-
-NORMAL_FOLDER = os.path.join("data", "pokemon_normal")
-SHINY_FOLDER = os.path.join("data", "pokemon_shiny")
-
-def load_templates(folder):
-    templates = []
-    for file in os.listdir(folder):
-        path = os.path.join(folder, file)
-        img = cv2.imread(path)
-        if img is not None:
-            templates.append(img)
-    return templates
-
-normal_templates = load_templates(NORMAL_FOLDER)
-shiny_templates = load_templates(SHINY_FOLDER)
-
-def activate_mgba():
-    """Brings mGBA window to foreground."""
-    hwnd = win32gui.FindWindow(None, "mGBA")
-    if hwnd:
-        win32gui.SetForegroundWindow(hwnd)
-        time.sleep(0.2)
-
-def press_key(key, duration=0.1):
-    pyautogui.keyDown(key)
-    time.sleep(duration)
-    pyautogui.keyUp(key)
-
-def run_sequence():
-    """The movement/dialogue sequence."""
-    press_key("up", 0.8)   # move forward
-    press_key("z", 0.1)    # skip dialogue (Z is A in mGBA default)
-    press_key("left", 0.5)
-    press_key("left", 0.5)
-    press_key("left", 0.5)
-    press_key("up", 0.5)
-    press_key("z", 0.1)
-    press_key("z", 0.1)
-    press_key("z", 0.1)
-
-def check_shiny(frame: np.ndarray) -> bool:
-    """Returns True if shiny detected."""
-    frame = np.ascontiguousarray(frame)
-    sprite_area = frame[RECT_Y1:RECT_Y2, RECT_X1:RECT_X2]
-
-    for template in shiny_templates:
-        template_resized = cv2.resize(template, (sprite_area.shape[1], sprite_area.shape[0]))
-        res = cv2.matchTemplate(sprite_area, template_resized, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        if max_val > 0.9:
-            return True
-    return False
-
-def reset_game():
-    """Sends reset hotkey to mGBA (default Ctrl+R)."""
-    pyautogui.hotkey("ctrl", "r")
-    time.sleep(1)
-
-def shinystartermethod(frame: np.ndarray):
-    """Called every frame from window_capture."""
-    # Draw debug rectangle
-    cv2.rectangle(frame, (RECT_X1, RECT_Y1), (RECT_X2, RECT_Y2), (0, 0, 255), 2)
-
-    # This runs only once per loop when we need to check
-    if check_shiny(frame):
-        print("[!!!] SHINY FOUND! [!!!]")
-        pyautogui.alert("Shiny Pokémon found!")
-        exit(0)  # stop bot
-    else:
-        print("No shiny. Resetting...")
-        reset_game()
-        time.sleep(1)
-        run_sequence()
+    threading.Thread(target=run_sequence, daemon=True).start()
