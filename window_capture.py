@@ -1,4 +1,3 @@
-import time
 import cv2
 import numpy as np
 import mss
@@ -66,12 +65,24 @@ def run(hwnd, callback=None):
             frame = capture_window(hwnd)
             if frame is None:
                 break
+
+            frame = frame.copy()
+
+            # --- DEBUG: starter detection zone (red) ---
+            x_s, y_s, w_s, h_s = 60, frame.shape[0] - 320, 300, 175
+            cv2.rectangle(frame, (x_s, y_s), (x_s + w_s, y_s + h_s), (0, 0, 255), 2)
+
+            # --- DEBUG: enemy detection zone (blue) ---
+            x_e, y_e, w_e, h_e = 400, frame.shape[0] - 450, 300, 180
+            cv2.rectangle(frame, (x_e, y_e), (x_e + w_e, y_e + h_e), (255, 0, 0), 2)
+
             cv2.imshow("Preview", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 stop_event.set()
                 break
             if stop_event.wait(interval):
                 break
+
     finally:
         stop_event.set()
         bot_thread.join()
