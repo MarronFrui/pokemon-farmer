@@ -1,29 +1,36 @@
 from window_capture import find_window_by_title, run
-from battle_detection import get_battle_state, start_battle_detection
+from battle_detection import get_battle_state
 from shiny_starter_farming import farm_shiny_starters
+from random_shiny import random_shiny_hunt
 from botmenu import show_menu
 import threading
 import time
 
 def main():
-    show_menu()
+    choice = show_menu()
+
     # Find the game window
     HWND = find_window_by_title("mGBA")
     if HWND is None:
         print("[!] Could not find mGBA window.")
         return
 
-    # Start battle detection in background
-    start_battle_detection(HWND, interval=2.0)
+    # Start the selected bot module
+    if choice == "1":
+        print("[INFO] Starting Shiny Starter Farming...")
+        farm_shiny_starters(HWND)
+    elif choice == "2":
+        print("[INFO] Starting Random Shiny Hunting...")
+        threading.Thread(target=random_shiny_hunt, args=(HWND,), daemon=True).start()
+    else:
+        print("[!] Invalid choice.")
+        return
 
-    # Start shiny starter farming in background
-    farm_shiny_starters(HWND)
-
-    # Start preview loop with debug rectangles
-    # The run() function already has its own loop, so we run it in the main thread
+    # Start preview loop with debug rectangles (from window_capture)
+    # The run() function already has its own loop
     run(HWND)
 
-    # Optional: Main loop to print state every few seconds (runs alongside preview)
+    # Optional: Print battle state periodically
     def print_state_loop():
         while True:
             in_battle, shiny = get_battle_state()

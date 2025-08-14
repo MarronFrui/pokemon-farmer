@@ -2,7 +2,7 @@ import threading
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection
+from battle_detection import start_battle_detection, get_battle_state
 
 VK = {
     'A': 0x58,  # X
@@ -15,10 +15,11 @@ VK = {
 }
 
 SEQUENCE = [
-    ('UP', 0.5), ('UP', 0.5), ('A', 0.1), ('WAIT', 7.0),
-    ('A', 0.1), ('WAIT', 1.0), ('A', 0.1), ('LEFT', 1.0),
-    ('WAIT', 0.5), ('UP', 0.5), ('A', 0.5), ('A', 0.5),
-    ('A', 0.5), ('WAIT', 6.0), ('A', 0.1)
+    ('UP', 0.1), ('LEFT', 0.1), ('DOWN', 0.1), ('RIGHT', 0.1)
+]
+
+SEQUENCE_FLEE = [
+    ('RIGHT', 0.1), ('DOWN', 0.1), ('A', 0.1)
 ]
 
 def press_key(hwnd, key, duration=0.1):
@@ -37,15 +38,18 @@ def press_sequence(hwnd, sequence):
             press_key(hwnd, key, dur)
         time.sleep(0.5)
 
-def farm_shiny_starters(hwnd):
-    if hasattr(farm_shiny_starters, "_started"):
-        return
-    farm_shiny_starters._started = True
-
-    # Start battle detection in the starter zone
-    start_battle_detection(hwnd, interval=1.0, shiny_zone="starter")
-    
-    def run_sequence():
-        press_sequence(hwnd, SEQUENCE)
-
-    threading.Thread(target=run_sequence, daemon=True).start()
+def random_shiny_hunt(hwnd, interval=2.0):
+    """
+    Start a background shiny hunter in enemy zone.
+    """
+    start_battle_detection(hwnd, interval=interval, shiny_zone="enemy")
+    while True:
+        in_battle, shiny_detected = get_battle_state()
+        if shiny_detected:
+            print("[!] Shiny detected! Stop hunting.")
+            break
+        else:
+            # spam encounter sequence
+            press_sequence(hwnd, SEQUENCE_FLEE)
+            time.sleep(2)
+            press_sequence(hwnd, SEQUENCE)

@@ -61,12 +61,21 @@ def is_shiny(frame, zone="starter", debug=True):
     detection_frame = np.ascontiguousarray(detection_frame)
 
     for template in shiny_templates:
+        # Check if template has alpha channel
+        if template.img.shape[2] == 4:
+            sprite_bgr = template.img[:, :, :3]
+            alpha_mask = template.img[:, :, 3]
+        else:
+            sprite_bgr = template.img
+            alpha_mask = None
+            
         t_h, t_w = template.img.shape[:2]
         scale = min(w / t_w, h / t_h)  # keep aspect ratio
         new_w, new_h = int(t_w * scale), int(t_h * scale)
-        t_resized = cv2.resize(template.img, (new_w, new_h))
+        t_resized = cv2.resize(sprite_bgr, (new_w, new_h))
+        mask_resized = cv2.resize(alpha_mask, (new_w, new_h)) if alpha_mask is not None else None
 
-        res = cv2.matchTemplate(detection_frame, t_resized, cv2.TM_CCOEFF_NORMED)
+        res = cv2.matchTemplate(detection_frame, t_resized, cv2.TM_CCOEFF_NORMED, mask=mask_resized)
         _, max_val, _, _ = cv2.minMaxLoc(res)
 
         if debug:
@@ -92,6 +101,23 @@ def is_shiny(frame, zone="starter", debug=True):
         #     stacked = np.hstack((preview_live, preview_template))
         #     cv2.imshow("DEBUG: Live Zone (left) vs Template (right)", stacked)
         #     cv2.waitKey(1)
+
+        # Special live preview for enemy Pokémon
+        
+        if debug and template.filename.lower() == "263.png":
+            preview_live = detection_frame.copy()
+            preview_template = template.img.copy()
+
+            if preview_live.shape[0] != preview_template.shape[0]:
+                scale_factor = preview_live.shape[0] / preview_template.shape[0]
+                preview_template = cv2.resize(
+                preview_template,
+                (int(preview_template.shape[1] * scale_factor), preview_live.shape[0])
+            )
+
+            stacked = np.hstack((preview_live, preview_template))
+            cv2.imshow("DEBUG: Enemy Zone (left) vs Template (right)", stacked)
+            cv2.waitKey(1)
 
     return False
 
