@@ -7,10 +7,13 @@ from window_capture import capture_window
 
 # === CONFIG ===
 BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
-SHINY_TEMPLATES_FOLDER = os.path.join("data", "pokemon_shiny")
-ANIMATION_DELAY = 8.0  # seconds
+DATABASE_FOLDER = os.path.join("data", "pokemon_database")
 SHINY_MATCH_THRESHOLD = 0.5
-BATTLE_MATCH_THRESHOLD = 0.3
+BATTLE_MATCH_THRESHOLD = 0.45
+SHAPE_MATCH_THRESHOLD = 0.6
+ANIMATION_DELAY = 8.0
+MAX_SCREENSHOTS_PER_SHAPE = 500
+BATTLE_GRACE_TIME = 3.0
 
 # === STATE ===
 _lock = threading.Lock()
@@ -18,7 +21,8 @@ in_battle = False
 shiny_detected = False
 _last_battle_state = False
 _battle_start_time = None
-_detection_complete = False  
+_detection_complete = False
+_stop_thread = False
 
 # === CLASSES ===
 class Template:
@@ -38,142 +42,219 @@ def load_templates(folder):
             templates.append(Template(img, f))
     return templates
 
-# === LOAD DATA ===
+def ensure_folder(*paths):
+    for path in paths:
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+def save_frame(path, frame, debug=None):
+    cv2.imwrite(path, frame)
+    if debug:
+        print(f"[DEBUG] Saved frame -> {path}")
+
 battle_templates = load_templates(BATTLE_TEMPLATES_FOLDER)
-shiny_templates = load_templates(SHINY_TEMPLATES_FOLDER)
 
-# === DETECTION ===
-def is_shiny(frame, zone="starter", debug=True):
+# === SHAPE DETECTION ===
+def detect_shape(gray_frame, color_frame, debug=True):
+    """Return shape folder path for the given grayscale frame."""
+    # Compute a simple hash of the grayscale image
+    shape_hash = hash(gray_frame.tobytes())
+    shape_folder = os.path.join(DATABASE_FOLDER, f"shape_{shape_hash}")
+    greyscale_folder = os.path.join(shape_folder, "greyscale")
+    color_folder = os.path.join(shape_folder, "color")
+
+    ensure_folder(greyscale_folder)
+    ensure_folder(color_folder)
+
+    # First time seeing this shape
+    if not os.listdir(greyscale_folder):
+        save_frame(os.path.join(greyscale_folder, "ref.png"), gray_frame, debug)
+        save_frame(os.path.join(color_folder, "1.png"), color_frame, debug)
+        if debug:
+            print(f"[DEBUG] New shape detected -> {shape_folder}")
+        return shape_folder
+
+
+    ref_path = os.path.join(greyscale_folder, "ref.png")
+    if os.path.exists(ref_path):
+        ref_img = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+        if ref_img is not None:
+            res = cv2.matchTemplate(gray_frame, ref_img, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if debug:
+                print(f"[DEBUG] Shape match score: {max_val:.3f} against {ref_path}")
+            if max_val >= SHAPE_MATCH_THRESHOLD:
+                existing_colors = sorted(os.listdir(color_folder))
+                new_index = len(existing_colors) + 1
+                save_frame(os.path.join(color_folder, f"{new_index}.png"), color_frame, debug)
+                is_shiny(color_frame, color_folder, debug=True)
+                return shape_folder
+      
+    # No match found, treat as new shape
+    new_index = len(os.listdir(DATABASE_FOLDER))
+    shape_folder = os.path.join(DATABASE_FOLDER, f"shape_{new_index}")
+    greyscale_folder = os.path.join(shape_folder, "greyscale")
+    color_folder = os.path.join(shape_folder, "color")
+    ensure_folder(greyscale_folder)
+    ensure_folder(color_folder)
+    save_frame(os.path.join(greyscale_folder, "ref.png"), gray_frame, debug)
+    save_frame(os.path.join(color_folder, "1.png"), color_frame, debug)
+    if debug:
+        print(f"[DEBUG] Detected new unique shape -> {shape_folder}")
+
+    return shape_folder
+
+# === SHINY DETECTION ===
+def is_shiny(new_frame, color_folder, debug=True):
     """
-    Check if any shiny template matches the given frame in the selected zone.
-    Zones are defined as (x, y, w, h).
+    Compare the new color frame against existing color frames in the folder.
+    Return True if the new frame differs significantly -> shiny detected.
     """
+    existing_files = sorted(os.listdir(color_folder))
+    if not existing_files:
+        if debug:
+            print(f"[DEBUG] No existing frames in {color_folder} to compare")
+        return False
+
+    for f in existing_files:
+        db_img_path = os.path.join(color_folder, f)
+        db_img = cv2.imread(db_img_path)
+        if db_img is None:
+            if debug:
+                print(f"[WARN] Could not read {db_img_path}")
+            continue
+        diff = cv2.absdiff(db_img, new_frame)
+        mean_diff = np.mean(diff)
+        if debug:
+            print(f"[DEBUG] Comparing with {f} -> mean diff {mean_diff:.2f}")
+        if mean_diff > SHINY_MATCH_THRESHOLD * 255:
+            if debug:
+                print(f"[ALERT] Shiny detected! Difference with {f} -> {mean_diff:.2f}")
+            return True
+
+    # If no frame differs enough, not shiny
+    if debug:
+        print(f"[DEBUG] No significant differences found -> not shiny")
+    return False
+
+# === Manage overhaul detection ===
+def detector(frame, zone="starter", debug=True):
+    """Detect shape and determine if the Pokémon is shiny by comparing color frames."""
     zones = {
-        "starter": (60, frame.shape[0] - 320, 300, 173),
-        "enemy":   (400, frame.shape[0] - 450, 300, 180)
+        "starter": (60, frame.shape[0] - 320, 300, 165),
+        "enemy":   (450, frame.shape[0] - 430, 200, 150)
     }
-
     if zone not in zones:
         raise ValueError(f"[!] Unknown detection zone '{zone}'")
 
     x, y, w, h = zones[zone]
-    detection_frame = frame[y:y+h, x:x+w].copy()
-    detection_frame = np.ascontiguousarray(detection_frame)
+    detection_frame = np.ascontiguousarray(frame[y:y+h, x:x+w])
+    gray_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
 
-    for template in shiny_templates:
-        # Check if template has alpha channel
-        if template.img.shape[2] == 4:
-            sprite_bgr = template.img[:, :, :3]
-            alpha_mask = template.img[:, :, 3]
-        else:
-            sprite_bgr = template.img
-            alpha_mask = None
-            
-        t_h, t_w = template.img.shape[:2]
-        scale = min(w / t_w, h / t_h)  # keep aspect ratio
-        new_w, new_h = int(t_w * scale), int(t_h * scale)
-        t_resized = cv2.resize(sprite_bgr, (new_w, new_h))
-        mask_resized = cv2.resize(alpha_mask, (new_w, new_h)) if alpha_mask is not None else None
+    shape_folder = detect_shape(gray_frame, detection_frame, debug)
 
-        res = cv2.matchTemplate(detection_frame, t_resized, cv2.TM_CCOEFF_NORMED, mask=mask_resized)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
+    greyscale_folder = os.path.join(shape_folder, "greyscale")
+    color_folder = os.path.join(shape_folder, "color")
+    ensure_folder(color_folder)
 
+    # First time seeing this shape -> not shiny
+    if len(os.listdir(greyscale_folder)) == 1:
         if debug:
-            print(f"[DEBUG] Checking template {template.filename} in zone '{zone}' -> score: {max_val:.3f}")
+            print(f"[DEBUG] First time seeing this shape -> not shiny")
+        save_frame(os.path.join(color_folder, "1.png"), detection_frame, debug)
+        return False
 
-        if max_val > SHINY_MATCH_THRESHOLD:
+    # Compare with existing color frames
+    existing_files = sorted(os.listdir(color_folder))
+    for f in existing_files:
+        db_img = cv2.imread(os.path.join(color_folder, f))
+        if db_img is None:
+            continue
+        diff = cv2.absdiff(db_img, detection_frame)
+        mean_diff = np.mean(diff)
+        if debug:
+            print(f"[DEBUG] Comparing with {f} -> mean diff {mean_diff:.2f}")
+        if mean_diff > SHINY_MATCH_THRESHOLD * 255:
             if debug:
-                print(f"[DEBUG] Shiny detected with template {template.filename} in zone '{zone}'")
+                print(f"[DEBUG] Possible shiny detected with {f}")
             return True
 
-        # # Special live preview for poussifeu
-        # if debug and template.filename.lower() == "poussifeu.png":
-        #     preview_live = detection_frame.copy()
-        #     preview_template = template.img.copy()
-
-        #     if preview_live.shape[0] != preview_template.shape[0]:
-        #         scale_factor = preview_live.shape[0] / preview_template.shape[0]
-        #         preview_template = cv2.resize(
-        #             preview_template,
-        #             (int(preview_template.shape[1] * scale_factor), preview_live.shape[0])
-        #         )
-
-        #     stacked = np.hstack((preview_live, preview_template))
-        #     cv2.imshow("DEBUG: Live Zone (left) vs Template (right)", stacked)
-        #     cv2.waitKey(1)
-
-        # Special live preview for enemy Pokémon
-        
-        if debug and template.filename.lower() == "263.png":
-            preview_live = detection_frame.copy()
-            preview_template = template.img.copy()
-
-            if preview_live.shape[0] != preview_template.shape[0]:
-                scale_factor = preview_live.shape[0] / preview_template.shape[0]
-                preview_template = cv2.resize(
-                preview_template,
-                (int(preview_template.shape[1] * scale_factor), preview_live.shape[0])
-            )
-
-            stacked = np.hstack((preview_live, preview_template))
-            cv2.imshow("DEBUG: Enemy Zone (left) vs Template (right)", stacked)
-            cv2.waitKey(1)
+    # Save new frame if under limit
+    if len(existing_files) < MAX_SCREENSHOTS_PER_SHAPE:
+        save_frame(os.path.join(color_folder, f"{len(existing_files)+1}.png"), detection_frame, debug)
 
     return False
 
+# === BATTLE CHECK ===
 def _check_battle(hwnd, shiny_zone="starter"):
     global in_battle, shiny_detected, _last_battle_state, _battle_start_time, _detection_complete
 
+    now = time.time()
     frame = capture_window(hwnd)
     if frame is None:
-        return
+        return False
 
-    # === Check battle state ===
     battle = False
     for template in battle_templates:
-        t_resized = cv2.resize(template.img, (frame.shape[1], frame.shape[0]))
-        res = cv2.matchTemplate(frame, t_resized, cv2.TM_CCOEFF_NORMED)
+        res = cv2.matchTemplate(frame, template.img, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > BATTLE_MATCH_THRESHOLD:
             battle = True
             break
 
-    # === Battle just started ===
     if battle and not _last_battle_state:
-        print("[DEBUG] Battle detected, starting animation delay timer...")
-        _battle_start_time = time.time()
+        print("[DEBUG] Battle detected, starting animation delay...")
+        _battle_start_time = now
         shiny_detected = False
         _detection_complete = False
+        print("[INFO] Battle started")
 
-    # === Shiny check after delay ===
     if battle and _battle_start_time and not _detection_complete:
-        if time.time() - _battle_start_time >= ANIMATION_DELAY:
-            shiny_detected = is_shiny(frame, zone=shiny_zone, debug=True)
+        if now - _battle_start_time >= ANIMATION_DELAY:
+            shiny_detected = detector(frame, zone=shiny_zone)
             _detection_complete = True
-            
-    # === Battle just ended ===
+
+    #Prevent false negative to end the combat
     if not battle and _last_battle_state:
-        shiny_detected = False
-        _battle_start_time = None
-        _detection_complete = False
-               
-    # === Update state ===
+        if _battle_start_time and now - _battle_start_time < BATTLE_GRACE_TIME:
+            battle = True
+        else:
+            print("[INFO] Battle ended")
+
     with _lock:
         in_battle = battle
         _last_battle_state = battle
 
-    print(f"[TICK] in_battle={in_battle}, shiny_detected={shiny_detected}")
+    print(f"[STATUS] in_battle={in_battle}, shiny_detected={shiny_detected}")
+    return _detection_complete
 
-# === THREAD LOOP ===
-def start_battle_detection(hwnd, interval=2.0, shiny_zone="starter"):
-    """Start a background thread that continuously checks for battles."""
+# === THREAD CONTROL ===
+def start_battle_detection(hwnd, interval=1.0, shiny_zone="starter"):
+    global _stop_thread, _detection_complete
+    _stop_thread = False
+    _detection_complete = False
+
     def worker():
-        while True:
+        global _stop_thread
+        print(f"[DEBUG] Thread started for shiny_zone='{shiny_zone}'")
+        while not _stop_thread and not _detection_complete:
+            print("[DEBUG] Worker loop iteration")
             _check_battle(hwnd, shiny_zone=shiny_zone)
             time.sleep(interval)
-    threading.Thread(target=worker, daemon=True).start()
+        print("[DEBUG] Thread exiting... stop_thread =", _stop_thread, "detection_complete =", _detection_complete)
 
-# === API ===
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    print(f"[DEBUG] Thread object created: {t}, alive={t.is_alive()}")
+    return t
+
+
 def get_battle_state():
     with _lock:
         return in_battle, shiny_detected
+    
+def stop_detection():
+    global _stop_thread
+    _stop_thread = True
+    while threading.active_count() > 1 and not _detection_complete:
+        time.sleep(0.05)

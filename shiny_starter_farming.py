@@ -2,50 +2,103 @@ import threading
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection
+from battle_detection import start_battle_detection, stop_detection, get_battle_state
 
+# Virtual key mapping (keyboard scancodes / VK codes)
 VK = {
-    'A': 0x58,  # X
-    'B': 0x5A,  # Z
+    'A': 0x58,        # X key
+    'B': 0x5A,        # Z key
+    'SELECT': 0x56,   # V key
+    'START': 0x42,    # B key
     'UP': win32con.VK_UP,
     'DOWN': win32con.VK_DOWN,
     'LEFT': win32con.VK_LEFT,
     'RIGHT': win32con.VK_RIGHT,
-    'RESET': win32con.VK_F1
 }
 
+# Main sequence to trigger starter encounter
 SEQUENCE = [
     ('UP', 0.5), ('UP', 0.5), ('A', 0.1), ('WAIT', 7.0),
     ('A', 0.1), ('WAIT', 1.0), ('A', 0.1), ('LEFT', 1.0),
     ('WAIT', 0.5), ('UP', 0.5), ('A', 0.5), ('A', 0.5),
-    ('A', 0.5), ('WAIT', 6.0), ('A', 0.1)
+    ('A', 0.5), ('WAIT', 8.0), ('A', 0.5), ('WAIT', 5.0)
 ]
+
+# Restart combo keys
+RESTART_SEQUENCE_FIRST = ['A', 'B', 'START', 'SELECT']
+RESTART_SEQUENCE_REST = [
+    ('WAIT', 4.0), ('A', 0.5), ('WAIT', 2.0),
+    ('A', 0.5), ('A', 0.5), ('WAIT', 1.0), ('A', 0.5), ('WAIT', 2.0)
+]
+
 
 def press_key(hwnd, key, duration=0.1):
     vk = VK.get(key.upper())
     if vk is None:
-        raise ValueError(f"Unknown key {key}")
-    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
+        raise ValueError(f"Unknown key: {key}")
+    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0.2)
+    print(f"[INPUT] Key down: {key}")
     time.sleep(duration)
-    win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
+    win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0.2)
+
 
 def press_sequence(hwnd, sequence):
-    for key, dur in sequence:
-        if key.upper() == "WAIT":
-            time.sleep(dur)
-        else:
-            press_key(hwnd, key, dur)
-        time.sleep(0.5)
+    for item in sequence:
+        if isinstance(item, tuple):
+            key, dur = item
+            if key.upper() == "WAIT":
+                print(f"[INPUT] Waiting {dur} seconds")
+                time.sleep(dur)
+            else:
+                press_key(hwnd, key, dur)
+            time.sleep(0.2)
+
+
+def press_multiple(hwnd, keys, duration=0.2):
+    for k in keys:
+        vk = VK.get(k.upper())
+        if vk is None:
+            continue
+        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
+        print(f"[INPUT] Multiple key down: {k}")
+    time.sleep(duration)
+    for k in keys:
+        vk = VK.get(k.upper())
+        if vk is None:
+            continue
+        win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
+
 
 def farm_shiny_starters(hwnd):
-    if hasattr(farm_shiny_starters, "_started"):
-        return
-    farm_shiny_starters._started = True
+    print("[INFO] Starting shiny starter farming loop")
 
-    # Start battle detection in the starter zone
-    start_battle_detection(hwnd, interval=1.0, shiny_zone="starter")
-    
-    def run_sequence():
+    while True or not shiny_detected:
+        # Start battle detection
+        thread = start_battle_detection(hwnd, interval=2.0, shiny_zone="starter")
+
+        # Run initial sequence to trigger encounter
         press_sequence(hwnd, SEQUENCE)
 
-    threading.Thread(target=run_sequence, daemon=True).start()
+        # Wait for battle result
+        while thread.is_alive():
+            in_battle, shiny_detected = get_battle_state()
+            if not in_battle and not shiny_detected:
+                stop_detection()
+                thread.join()
+                time.sleep(0.5)
+                print("[INFO] Normal encounter ended, restarting...")
+                break
+            if shiny_detected:
+                stop_detection()
+                thread.join()
+                time.sleep(0.5)
+                print("[ALERT] Shiny detected! Stopping farming loop.")
+                break
+            time.sleep(0.5)
+
+
+        # Restart combo
+        press_multiple(hwnd, RESTART_SEQUENCE_FIRST, duration=2.0)
+        press_sequence(hwnd, RESTART_SEQUENCE_REST)
+
+
