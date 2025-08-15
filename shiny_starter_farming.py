@@ -4,6 +4,8 @@ import win32api
 import win32con
 from battle_detection import start_battle_detection, stop_detection, get_battle_state
 
+#shiny_starter_farming.py
+
 # Virtual key mapping (keyboard scancodes / VK codes)
 VK = {
     'A': 0x58,        # X key
@@ -21,7 +23,7 @@ SEQUENCE = [
     ('UP', 0.5), ('UP', 0.5), ('A', 0.1), ('WAIT', 7.0),
     ('A', 0.1), ('WAIT', 1.0), ('A', 0.1), ('LEFT', 1.0),
     ('WAIT', 0.5), ('UP', 0.5), ('A', 0.5), ('A', 0.5),
-    ('A', 0.5), ('WAIT', 8.0), ('A', 0.5), ('WAIT', 5.0)
+    ('A', 0.5), ('WAIT', 10.0), ('A', 0.5), ('WAIT', 5.0)
 ]
 
 # Restart combo keys
@@ -31,15 +33,19 @@ RESTART_SEQUENCE_REST = [
     ('A', 0.5), ('A', 0.5), ('WAIT', 1.0), ('A', 0.5), ('WAIT', 2.0)
 ]
 
+# Global lock for shared battle state
+battle_lock = threading.Lock()
+shiny_detected = False
+
 
 def press_key(hwnd, key, duration=0.1):
     vk = VK.get(key.upper())
     if vk is None:
         raise ValueError(f"Unknown key: {key}")
-    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0.2)
+    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
     print(f"[INPUT] Key down: {key}")
     time.sleep(duration)
-    win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0.2)
+    win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
 
 def press_sequence(hwnd, sequence):
@@ -70,9 +76,10 @@ def press_multiple(hwnd, keys, duration=0.2):
 
 
 def farm_shiny_starters(hwnd):
+    global shiny_detected
     print("[INFO] Starting shiny starter farming loop")
 
-    while True or not shiny_detected:
+    while True:
         # Start battle detection
         thread = start_battle_detection(hwnd, interval=2.0, shiny_zone="starter")
 
@@ -81,8 +88,8 @@ def farm_shiny_starters(hwnd):
 
         # Wait for battle result
         while thread.is_alive():
-            in_battle, shiny_detected = get_battle_state()
-            if not in_battle and not shiny_detected:
+            in_battle, shiny_detected = get_battle_state()  # get fresh values from detection
+            if not in_battle:
                 stop_detection()
                 thread.join()
                 time.sleep(0.5)
@@ -93,12 +100,12 @@ def farm_shiny_starters(hwnd):
                 thread.join()
                 time.sleep(0.5)
                 print("[ALERT] Shiny detected! Stopping farming loop.")
-                break
+                return
             time.sleep(0.5)
-
 
         # Restart combo
         press_multiple(hwnd, RESTART_SEQUENCE_FIRST, duration=2.0)
         press_sequence(hwnd, RESTART_SEQUENCE_REST)
+
 
 

@@ -3,16 +3,19 @@ import numpy as np
 import threading
 import time
 import os
+from skimage.metrics import structural_similarity as ssim
 from window_capture import capture_window
+
+#battle_detection.py
 
 # === CONFIG ===
 BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
 DATABASE_FOLDER = os.path.join("data", "pokemon_database")
-SHINY_MATCH_THRESHOLD = 0.5
+SHINY_MATCH_THRESHOLD = 0.8
 BATTLE_MATCH_THRESHOLD = 0.45
-SHAPE_MATCH_THRESHOLD = 0.6
-ANIMATION_DELAY = 8.0
-MAX_SCREENSHOTS_PER_SHAPE = 500
+SHAPE_MATCH_THRESHOLD = 0.9
+ANIMATION_DELAY = 10.0
+MAX_SCREENSHOTS_PER_SHAPE = 10
 BATTLE_GRACE_TIME = 3.0
 
 # === STATE ===
@@ -54,50 +57,70 @@ def save_frame(path, frame, debug=None):
 
 battle_templates = load_templates(BATTLE_TEMPLATES_FOLDER)
 
-# === SHAPE DETECTION ===
-def detect_shape(gray_frame, color_frame, debug=True):
-    """Return shape folder path for the given grayscale frame."""
-    # Compute a simple hash of the grayscale image
-    shape_hash = hash(gray_frame.tobytes())
-    shape_folder = os.path.join(DATABASE_FOLDER, f"shape_{shape_hash}")
-    greyscale_folder = os.path.join(shape_folder, "greyscale")
-    color_folder = os.path.join(shape_folder, "color")
-
-    ensure_folder(greyscale_folder)
-    ensure_folder(color_folder)
-
-    # First time seeing this shape
-    if not os.listdir(greyscale_folder):
-        save_frame(os.path.join(greyscale_folder, "ref.png"), gray_frame, debug)
-        save_frame(os.path.join(color_folder, "1.png"), color_frame, debug)
-        if debug:
-            print(f"[DEBUG] New shape detected -> {shape_folder}")
-        return shape_folder
 
 
-    ref_path = os.path.join(greyscale_folder, "ref.png")
-    if os.path.exists(ref_path):
-        ref_img = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-        if ref_img is not None:
-            res = cv2.matchTemplate(gray_frame, ref_img, cv2.TM_CCOEFF_NORMED)
+# === DETECT SHAPE ===
+def detect_shape(mask_frame, color_frame, debug=True):
+    """Return shape folder path for the given frame using an alpha mask."""
+
+    # Convert mask_frame to alpha mask
+    _, alpha_mask = cv2.threshold(mask_frame, 240, 255, cv2.THRESH_BINARY_INV)
+
+    # Scan existing shapes
+    for shape_name in sorted(os.listdir(DATABASE_FOLDER)):
+        shape_folder = os.path.join(DATABASE_FOLDER, shape_name)
+        mask_folder = os.path.join(shape_folder, "mask")
+        color_folder = os.path.join(shape_folder, "color")
+        shiny_folder = os.path.join(shape_folder, "shiny")
+        ensure_folder(shiny_folder)
+
+        if not os.path.exists(mask_folder):
+            continue
+
+        for ref_file in sorted(os.listdir(mask_folder)):
+            ref_path = os.path.join(mask_folder, ref_file)
+            ref_img = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+            if ref_img is None:
+                continue
+
+            # Ensure types match
+            if alpha_mask.dtype != ref_img.dtype:
+                alpha_mask = alpha_mask.astype(ref_img.dtype)
+
+            res = cv2.matchTemplate(alpha_mask, ref_img, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(res)
             if debug:
-                print(f"[DEBUG] Shape match score: {max_val:.3f} against {ref_path}")
+                print(f"[DEBUG] Comparing with {ref_path} -> match score {max_val:.3f}")
+
             if max_val >= SHAPE_MATCH_THRESHOLD:
-                existing_colors = sorted(os.listdir(color_folder))
-                new_index = len(existing_colors) + 1
-                save_frame(os.path.join(color_folder, f"{new_index}.png"), color_frame, debug)
-                is_shiny(color_frame, color_folder, debug=True)
+                # Shape matched -> check if shiny
+                if is_shiny(color_frame, color_folder, debug):
+                    existing_shinies = sorted(os.listdir(shiny_folder))
+                    if len(existing_shinies) < MAX_SCREENSHOTS_PER_SHAPE:
+                        new_index = len(existing_shinies) + 1
+                        save_frame(os.path.join(shiny_folder, f"{new_index}.png"), color_frame, debug)
+                else:
+                    existing_colors = sorted(os.listdir(color_folder))
+                    if len(existing_colors) < MAX_SCREENSHOTS_PER_SHAPE:
+                        new_index = len(existing_colors) + 1
+                        save_frame(os.path.join(color_folder, f"{new_index}.png"), color_frame, debug)
+
                 return shape_folder
-      
-    # No match found, treat as new shape
-    new_index = len(os.listdir(DATABASE_FOLDER))
+
+   # No match found -> create new unique shape folder
+    existing_indices = [
+        int(f.split("_")[1])
+        for f in os.listdir(DATABASE_FOLDER)
+        if f.startswith("shape_") and f.split("_")[1].isdigit()
+    ]
+    new_index = max(existing_indices, default=-1) + 1
     shape_folder = os.path.join(DATABASE_FOLDER, f"shape_{new_index}")
-    greyscale_folder = os.path.join(shape_folder, "greyscale")
+    mask_folder = os.path.join(shape_folder, "mask")
     color_folder = os.path.join(shape_folder, "color")
-    ensure_folder(greyscale_folder)
-    ensure_folder(color_folder)
-    save_frame(os.path.join(greyscale_folder, "ref.png"), gray_frame, debug)
+    shiny_folder = os.path.join(shape_folder, "shiny")
+    ensure_folder(mask_folder, color_folder, shiny_folder)
+
+    save_frame(os.path.join(mask_folder, "ref.png"), alpha_mask, debug)
     save_frame(os.path.join(color_folder, "1.png"), color_frame, debug)
     if debug:
         print(f"[DEBUG] Detected new unique shape -> {shape_folder}")
@@ -107,14 +130,15 @@ def detect_shape(gray_frame, color_frame, debug=True):
 # === SHINY DETECTION ===
 def is_shiny(new_frame, color_folder, debug=True):
     """
-    Compare the new color frame against existing color frames in the folder.
-    Return True if the new frame differs significantly -> shiny detected.
+    Compare the new color frame against existing color frames in the folder using SSIM.
+    Allows for small vertical alignment offsets to reduce false shiny detections.
     """
     existing_files = sorted(os.listdir(color_folder))
-    if not existing_files:
-        if debug:
-            print(f"[DEBUG] No existing frames in {color_folder} to compare")
-        return False
+    gray_new_base = cv2.cvtColor(new_frame, cv2.COLOR_BGR2GRAY)
+
+    shiny_found = False
+    best_overall_score = -1.0
+    max_offset = 3  # pixels to shift up/down
 
     for f in existing_files:
         db_img_path = os.path.join(color_folder, f)
@@ -123,25 +147,49 @@ def is_shiny(new_frame, color_folder, debug=True):
             if debug:
                 print(f"[WARN] Could not read {db_img_path}")
             continue
-        diff = cv2.absdiff(db_img, new_frame)
-        mean_diff = np.mean(diff)
+
+        gray_db = cv2.cvtColor(db_img, cv2.COLOR_BGR2GRAY)
+
+        # Match sizes
+        if gray_db.shape != gray_new_base.shape:
+            min_h = min(gray_db.shape[0], gray_new_base.shape[0])
+            min_w = min(gray_db.shape[1], gray_new_base.shape[1])
+            gray_db = gray_db[:min_h, :min_w]
+            gray_new_base = gray_new_base[:min_h, :min_w]
+
+        # Try vertical offsets
+        best_score_for_file = -1.0
+        for dy in range(-max_offset, max_offset + 1):
+            shifted = np.roll(gray_new_base, dy, axis=0)
+
+            # Zero out wrapped-around rows to avoid false matches
+            if dy > 0:
+                shifted[:dy, :] = 0
+            elif dy < 0:
+                shifted[dy:, :] = 0
+
+            score, _ = ssim(shifted, gray_db, full=True)
+            best_score_for_file = max(best_score_for_file, score)
+
         if debug:
-            print(f"[DEBUG] Comparing with {f} -> mean diff {mean_diff:.2f}")
-        if mean_diff > SHINY_MATCH_THRESHOLD * 255:
+            print(f"[DEBUG] Best SSIM vs {f} -> {best_score_for_file:.3f}")
+
+        best_overall_score = max(best_overall_score, best_score_for_file)
+
+        if best_score_for_file < SHINY_MATCH_THRESHOLD:
+            shiny_found = True
             if debug:
-                print(f"[ALERT] Shiny detected! Difference with {f} -> {mean_diff:.2f}")
-            return True
+                print(f"[ALERT] Shiny detected! Best score vs {f} -> {best_score_for_file:.3f}")
+            break
 
-    # If no frame differs enough, not shiny
-    if debug:
-        print(f"[DEBUG] No significant differences found -> not shiny")
-    return False
+    return shiny_found
 
-# === Manage overhaul detection ===
+# === DETECTOR ===
 def detector(frame, zone="starter", debug=True):
     """Detect shape and determine if the Pokémon is shiny by comparing color frames."""
+
     zones = {
-        "starter": (60, frame.shape[0] - 320, 300, 165),
+        "starter": (60, frame.shape[0] - 320, 245, 170),
         "enemy":   (450, frame.shape[0] - 430, 200, 150)
     }
     if zone not in zones:
@@ -149,41 +197,20 @@ def detector(frame, zone="starter", debug=True):
 
     x, y, w, h = zones[zone]
     detection_frame = np.ascontiguousarray(frame[y:y+h, x:x+w])
-    gray_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
 
-    shape_folder = detect_shape(gray_frame, detection_frame, debug)
+    # Create mask for shape detection (grayscale)
+    mask_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
 
-    greyscale_folder = os.path.join(shape_folder, "greyscale")
+    # Detect the shape and get its folder
+    shape_folder = detect_shape(mask_frame, detection_frame, debug)
+
+    # Ensure color folder exists
     color_folder = os.path.join(shape_folder, "color")
     ensure_folder(color_folder)
 
-    # First time seeing this shape -> not shiny
-    if len(os.listdir(greyscale_folder)) == 1:
-        if debug:
-            print(f"[DEBUG] First time seeing this shape -> not shiny")
-        save_frame(os.path.join(color_folder, "1.png"), detection_frame, debug)
-        return False
+    # Check for shiny
+    return is_shiny(detection_frame, color_folder, debug)
 
-    # Compare with existing color frames
-    existing_files = sorted(os.listdir(color_folder))
-    for f in existing_files:
-        db_img = cv2.imread(os.path.join(color_folder, f))
-        if db_img is None:
-            continue
-        diff = cv2.absdiff(db_img, detection_frame)
-        mean_diff = np.mean(diff)
-        if debug:
-            print(f"[DEBUG] Comparing with {f} -> mean diff {mean_diff:.2f}")
-        if mean_diff > SHINY_MATCH_THRESHOLD * 255:
-            if debug:
-                print(f"[DEBUG] Possible shiny detected with {f}")
-            return True
-
-    # Save new frame if under limit
-    if len(existing_files) < MAX_SCREENSHOTS_PER_SHAPE:
-        save_frame(os.path.join(color_folder, f"{len(existing_files)+1}.png"), detection_frame, debug)
-
-    return False
 
 # === BATTLE CHECK ===
 def _check_battle(hwnd, shiny_zone="starter"):
@@ -204,15 +231,18 @@ def _check_battle(hwnd, shiny_zone="starter"):
 
     if battle and not _last_battle_state:
         print("[DEBUG] Battle detected, starting animation delay...")
-        _battle_start_time = now
-        shiny_detected = False
-        _detection_complete = False
+        with _lock:
+            _battle_start_time = now
+            shiny_detected = False
+            _detection_complete = False
+
         print("[INFO] Battle started")
 
     if battle and _battle_start_time and not _detection_complete:
         if now - _battle_start_time >= ANIMATION_DELAY:
-            shiny_detected = detector(frame, zone=shiny_zone)
-            _detection_complete = True
+            with _lock:
+                shiny_detected = detector(frame, zone=shiny_zone)
+                _detection_complete = True
 
     #Prevent false negative to end the combat
     if not battle and _last_battle_state:
@@ -236,12 +266,9 @@ def start_battle_detection(hwnd, interval=1.0, shiny_zone="starter"):
 
     def worker():
         global _stop_thread
-        print(f"[DEBUG] Thread started for shiny_zone='{shiny_zone}'")
         while not _stop_thread and not _detection_complete:
-            print("[DEBUG] Worker loop iteration")
             _check_battle(hwnd, shiny_zone=shiny_zone)
             time.sleep(interval)
-        print("[DEBUG] Thread exiting... stop_thread =", _stop_thread, "detection_complete =", _detection_complete)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -256,5 +283,5 @@ def get_battle_state():
 def stop_detection():
     global _stop_thread
     _stop_thread = True
-    while threading.active_count() > 1 and not _detection_complete:
-        time.sleep(0.05)
+    # Wait a short moment for thread to exit
+    time.sleep(0.1)

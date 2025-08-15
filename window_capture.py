@@ -1,9 +1,11 @@
 import time
-import threading
 import cv2
+import threading
 import numpy as np
 import mss
 import win32gui
+
+#window_capture.py
 
 FRAME_INTERVAL_MS = 50
 

@@ -2,7 +2,7 @@ import threading
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection, get_battle_state
+from battle_detection import start_battle_detection, get_battle_state, stop_detection, _detection_complete
 
 VK = {
     'A': 0x58,  # X
@@ -14,7 +14,8 @@ VK = {
     'RESET': win32con.VK_F1
 }
 
-SEQUENCE = [
+# movement sequences
+SEQUENCE_ENCOUNTER = [
     ('UP', 0.1), ('LEFT', 0.1), ('DOWN', 0.1), ('RIGHT', 0.1)
 ]
 
@@ -38,18 +39,31 @@ def press_sequence(hwnd, sequence):
             press_key(hwnd, key, dur)
         time.sleep(0.5)
 
-def random_shiny_hunt(hwnd, interval=2.0):
-    """
-    Start a background shiny hunter in enemy zone.
-    """
-    start_battle_detection(hwnd, interval=interval, shiny_zone="enemy")
+def random_shiny_hunt(hwnd):
+    global shiny_detected
+    print("[INFO] Starting random shiny hunt loop")
+
     while True:
+        shiny_detected = False  # reset per encounter
+
+        # Start battle detection for this encounter
+        thread = start_battle_detection(hwnd, interval=2.0, shiny_zone="enemy")
+
+        # Trigger the encounter
+        press_sequence(hwnd, SEQUENCE_ENCOUNTER)
+
+        # Wait until the battle ends (thread completes)
+        thread.join()
+
+        # Check battle result
         in_battle, shiny_detected = get_battle_state()
+
         if shiny_detected:
-            print("[!] Shiny detected! Stop hunting.")
-            break
+            print("[ALERT] Shiny detected! Stopping hunt.")
+            return
         else:
-            # spam encounter sequence
+            print("[INFO] No shiny detected, fleeing...")
             press_sequence(hwnd, SEQUENCE_FLEE)
-            time.sleep(2)
-            press_sequence(hwnd, SEQUENCE)
+
+        # Optional delay before next encounter
+        time.sleep(1.0)

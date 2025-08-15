@@ -1,3 +1,5 @@
+#botmenu.py
+
 def show_menu():
     print("=== Pokémon Bot Menu ===")
     print("1. Shiny Starter Farming")

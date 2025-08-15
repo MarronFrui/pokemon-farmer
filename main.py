@@ -6,6 +6,8 @@ from botmenu import show_menu
 import threading
 import time
 
+#main.py
+
 def main():
     choice = show_menu()
 
@@ -21,7 +23,7 @@ def main():
         farm_shiny_starters(HWND)
     elif choice == "2":
         print("[INFO] Starting Random Shiny Hunting...")
-        threading.Thread(target=random_shiny_hunt, args=(HWND,), daemon=True).start()
+        random_shiny_hunt(HWND)
     else:
         print("[!] Invalid choice.")
         return
