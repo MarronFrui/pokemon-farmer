@@ -4,7 +4,10 @@ import threading
 import time
 import os
 from skimage.metrics import structural_similarity as ssim
-from window_capture import capture_window
+from ctypes import windll
+import win32gui
+import win32ui
+from PIL import Image
 
 #battle_detection.py
 
@@ -12,18 +15,19 @@ from window_capture import capture_window
 BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
 DATABASE_FOLDER = os.path.join("data", "pokemon_database")
 SHINY_MATCH_THRESHOLD = 0.8
-BATTLE_MATCH_THRESHOLD = 0.45
+BATTLE_MATCH_THRESHOLD = 0.5
 SHAPE_MATCH_THRESHOLD = 0.9
 ANIMATION_DELAY = 10.0
 MAX_SCREENSHOTS_PER_SHAPE = 10
 BATTLE_GRACE_TIME = 3.0
+WINDOW_NAME = "mGBA - Pokemon"
 
 # === STATE ===
 _lock = threading.Lock()
 in_battle = False
 shiny_detected = False
 _last_battle_state = False
-_battle_start_time = None
+_battle_start_time = 0
 _detection_complete = False
 _stop_thread = False
 
@@ -57,7 +61,79 @@ def save_frame(path, frame, debug=None):
 
 battle_templates = load_templates(BATTLE_TEMPLATES_FOLDER)
 
+# === WIN32 SCREENSHOT ===
+def screenshot(window_ref):
+    # If window_ref is an int, treat as hwnd
+    if isinstance(window_ref, int):
+        hwnd = window_ref
+    else:
+        hwnd = win32gui.FindWindow(None, window_ref)
 
+    if not hwnd:
+        return None
+    
+    left, top, right, bot = win32gui.GetWindowRect(hwnd)
+    w, h = right - left, bot - top
+    if w <= 0 or h <= 0:
+        return None
+
+    hwndDC = win32gui.GetWindowDC(hwnd)
+    mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+    saveDC = mfcDC.CreateCompatibleDC()
+
+    saveBitMap = win32ui.CreateBitmap()
+    saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
+    saveDC.SelectObject(saveBitMap)
+
+    result = windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 1)
+
+    bmpinfo = saveBitMap.GetInfo()
+    bmpstr = saveBitMap.GetBitmapBits(True)
+    im = Image.frombuffer('RGB', (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
+                          bmpstr, 'raw', 'BGRX', 0, 1)
+
+    # Cleanup
+    win32gui.DeleteObject(saveBitMap.GetHandle())
+    saveDC.DeleteDC()
+    mfcDC.DeleteDC()
+    win32gui.ReleaseDC(hwnd, hwndDC)
+
+    if result != 1:
+        return None
+    return im
+
+def _save_battle_frame(frame, limit=200, folder=BATTLE_TEMPLATES_FOLDER):
+    ensure_folder(folder)
+
+    # Get numeric suffixes of existing battle files
+    existing_files = sorted(os.listdir(folder))
+    existing_indices = []
+    for f in existing_files:
+        if f.startswith("battle_") and f.endswith(".png"):
+            try:
+                idx = int(f.split("_")[1].split(".")[0])
+                existing_indices.append(idx)
+            except ValueError:
+                continue
+
+    # Find the first unused index
+    new_index = 1
+    while new_index in existing_indices:
+        new_index += 1
+
+    if new_index > limit:
+        return  # don't save if limit exceeded
+
+    filename = os.path.join(folder, f"battle_{new_index:03d}.png")
+    cv2.imwrite(filename, frame)
+    print(f"[DEBUG] Saved new battle template -> {filename}")
+
+def capture_window(window_name: str):
+    im = screenshot(window_name)
+    if im is None:
+        return None
+    frame = np.array(im)[:, :, ::-1].copy()  # Convert RGB → BGR
+    return frame
 
 # === DETECT SHAPE ===
 def detect_shape(mask_frame, color_frame, debug=True):
@@ -189,9 +265,10 @@ def detector(frame, zone="starter", debug=True):
     """Detect shape and determine if the Pokémon is shiny by comparing color frames."""
 
     zones = {
-        "starter": (60, frame.shape[0] - 320, 245, 170),
+        "starter": (60, frame.shape[0] - 335, 300, 165),
         "enemy":   (450, frame.shape[0] - 430, 200, 150)
     }
+    
     if zone not in zones:
         raise ValueError(f"[!] Unknown detection zone '{zone}'")
 
@@ -211,19 +288,21 @@ def detector(frame, zone="starter", debug=True):
     # Check for shiny
     return is_shiny(detection_frame, color_folder, debug)
 
-
 # === BATTLE CHECK ===
-def _check_battle(hwnd, shiny_zone="starter"):
+def _check_battle(window_name, shiny_zone="starter"):
     global in_battle, shiny_detected, _last_battle_state, _battle_start_time, _detection_complete
 
+    
     now = time.time()
-    frame = capture_window(hwnd)
+    frame = capture_window(window_name)
     if frame is None:
         return False
 
     battle = False
     for template in battle_templates:
-        res = cv2.matchTemplate(frame, template.img, cv2.TM_CCOEFF_NORMED)
+        target_h, target_w = frame.shape[:2]
+        template_resized = cv2.resize(template.img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        res = cv2.matchTemplate(frame, template_resized, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > BATTLE_MATCH_THRESHOLD:
             battle = True
@@ -235,16 +314,15 @@ def _check_battle(hwnd, shiny_zone="starter"):
             _battle_start_time = now
             shiny_detected = False
             _detection_complete = False
-
         print("[INFO] Battle started")
 
     if battle and _battle_start_time and not _detection_complete:
         if now - _battle_start_time >= ANIMATION_DELAY:
             with _lock:
+                _save_battle_frame(frame)
                 shiny_detected = detector(frame, zone=shiny_zone)
                 _detection_complete = True
 
-    #Prevent false negative to end the combat
     if not battle and _last_battle_state:
         if _battle_start_time and now - _battle_start_time < BATTLE_GRACE_TIME:
             battle = True
@@ -259,7 +337,7 @@ def _check_battle(hwnd, shiny_zone="starter"):
     return _detection_complete
 
 # === THREAD CONTROL ===
-def start_battle_detection(hwnd, interval=1.0, shiny_zone="starter"):
+def start_battle_detection(window_name=WINDOW_NAME, interval=1.0, shiny_zone="starter"):
     global _stop_thread, _detection_complete
     _stop_thread = False
     _detection_complete = False
@@ -267,14 +345,13 @@ def start_battle_detection(hwnd, interval=1.0, shiny_zone="starter"):
     def worker():
         global _stop_thread
         while not _stop_thread and not _detection_complete:
-            _check_battle(hwnd, shiny_zone=shiny_zone)
+            _check_battle(window_name, shiny_zone=shiny_zone)
             time.sleep(interval)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     print(f"[DEBUG] Thread object created: {t}, alive={t.is_alive()}")
     return t
-
 
 def get_battle_state():
     with _lock:

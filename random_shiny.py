@@ -1,9 +1,7 @@
-import threading
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection, get_battle_state, stop_detection, _detection_complete
-
+from battle_detection import start_battle_detection, get_battle_state
 VK = {
     'A': 0x58,  # X
     'B': 0x5A,  # Z

@@ -1,5 +1,4 @@
 # shiny_starter_farming_fixed.py
-import threading
 import time
 import win32api
 import win32con
@@ -20,15 +19,15 @@ VK = {
 # === MOVEMENT SEQUENCES ===
 SEQUENCE_STARTER = [
     ('UP', 0.5), ('UP', 0.5), ('A', 0.1), ('WAIT', 7.0),
-    ('A', 0.1), ('WAIT', 1.0), ('A', 0.1), ('LEFT', 1.0),
-    ('WAIT', 0.5), ('UP', 0.5), ('A', 0.5), ('A', 0.5),
-    ('A', 0.5), ('WAIT', 10.0), ('A', 0.5), ('WAIT', 5.0)
+    ('A', 0.1), ('WAIT', 1.0), ('A', 0.1), ('LEFT', 0.9),
+    ('WAIT', 0.05), ('UP', 0.2), ('A', 0.5), ('A', 0.5),
+    ('A', 0.5), ('WAIT', 7.0), ('A', 0.5), ('WAIT', 4.0)
 ]
 
 RESTART_FIRST = ['A', 'B', 'START', 'SELECT']
 RESTART_REST = [
-    ('WAIT', 4.0), ('A', 0.5), ('WAIT', 2.0),
-    ('A', 0.5), ('A', 0.5), ('WAIT', 1.0), ('A', 0.5), ('WAIT', 2.0)
+    ('WAIT', 3.0), ('A', 0.5), ('WAIT', 1.0),
+    ('A', 0.5), ('A', 0.5), ('WAIT', 1.0), ('A', 0.5), ('WAIT', 1.0)
 ]
 
 # === INPUT HELPERS ===
@@ -71,11 +70,11 @@ def farm_shiny_starters(hwnd):
         # Reset shiny detection
         shiny_detected = False
 
-        # Start battle detection thread
-        thread = start_battle_detection(hwnd, interval=2.0, shiny_zone="starter")
-
         # Trigger starter encounter
         press_sequence(hwnd, SEQUENCE_STARTER)
+
+        # Start battle detection thread
+        thread = start_battle_detection(hwnd, interval=2.0, shiny_zone="starter")
 
         # Monitor detection
         while thread.is_alive():
