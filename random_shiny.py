@@ -58,7 +58,7 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
         # Start battle detection immediately
         thread = start_battle_detection(
-            hwnd, interval=2.0, shiny_zone="enemy",
+            hwnd, interval=2.5, shiny_zone="enemy",
             shiny_event=shiny_event, not_shiny_event=not_shiny_event
         )
         # Move around until a battle starts

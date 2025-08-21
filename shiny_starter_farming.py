@@ -7,6 +7,7 @@ import random
 import time
 
 
+
 # === KEY MAPPING ===
 VK = {
     'A': 0x58,        # X

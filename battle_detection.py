@@ -28,6 +28,7 @@ shiny_detected = False
 _stop_thread = False
 _thread_counter = 0 
 
+
 # === CLASSES ===
 class Template:
     def __init__(self, img, filename):
@@ -97,7 +98,7 @@ def screenshot(window_ref):
         return None
     return im
 
-def _save_battle_frame(frame, limit=200, folder=BATTLE_TEMPLATES_FOLDER):
+def save_battle_frame(frame, limit=200, folder=BATTLE_TEMPLATES_FOLDER):
     ensure_folder(folder)
 
     existing_files = sorted(os.listdir(folder))
@@ -135,7 +136,7 @@ def start_battle_detection(hwnd, interval, shiny_zone=None, shiny_event=None, no
 
     def worker():
         while not _stop_thread:
-            if _check_battle(hwnd, shiny_zone=shiny_zone, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
+            if check_battle(hwnd, shiny_zone=shiny_zone, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
                 break
             time.sleep(interval)
 
@@ -150,9 +151,8 @@ def start_battle_detection(hwnd, interval, shiny_zone=None, shiny_event=None, no
     return t
 
 # === BATTLE CHECK ===
-def _check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_event=None):
-    _battle_start_time = False
-    _detection_complete = False
+def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_event=None):
+    
     now = time.time()
     frame = capture_window(window_name)
     if frame is None:
@@ -166,23 +166,25 @@ def _check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > BATTLE_MATCH_THRESHOLD:
             config.in_battle = True
+            time.sleep(2.5)
             break
   
     
-    if config.in_battle and not _battle_start_time:
-        with _lock:
-            _battle_start_time = now
+    if config.in_battle and not config.battle_start_time:
+        config.battle_start_time = now
             
-    if not config.in_battle and _battle_start_time is not None:
-        _battle_start_time = None
+    if not config.in_battle:
+        config.battle_start_time = None
+        config.detection_complete = False
         
-    if config.in_battle and _battle_start_time and not _detection_complete:
-        time.sleep(3.0)
-        with _lock:
-            _detection_complete = True
-            _save_battle_frame(frame)
-            detector(frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
-    print(f"_battle_start_time {_battle_start_time} _detection_complete {_detection_complete} ")
+    if config.in_battle and config.battle_start_time and not config.detection_complete:
+        
+        idle_frame = wait_for_idle(window_name, debug=True)
+        if idle_frame is not None:    
+            with _lock:
+                config.detection_complete = True
+                save_battle_frame(idle_frame)
+                detector(idle_frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
     print(f"[STATUS] in_battle={config.in_battle}")
     return 
 
@@ -267,6 +269,7 @@ def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=
     save_frame(os.path.join(color_folder, "1.png"), detection_frame, debug)
     if debug:
         print(f"[DEBUG] Detected new unique shape -> {shape_folder}")
+    not_shiny_event.set()
 
     return shape_folder
 
@@ -301,6 +304,36 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
             not_shiny_event.set()
 
     return shiny_found
+
+def wait_for_idle(hwnd, timeout=5.0, check_interval=0.2, threshold=0.99, debug=False):
+    """
+    Wait until the window's screen is visually stable (idle).
+    Returns the last stable frame (BGR NumPy array), or None if timeout.
+    """
+    start = time.time()
+    prev_frame = np.array(screenshot(hwnd))[:, :, ::-1].copy()  # PrintWindow → RGB → BGR
+    if prev_frame is None:
+        return None
+
+    while time.time() - start < timeout:
+        time.sleep(check_interval)
+        curr = screenshot(hwnd)
+        if curr is None:
+            continue
+        curr_frame = np.array(curr)[:, :, ::-1].copy()
+
+        score = ssim(prev_frame, curr_frame, channel_axis=-1)
+        if debug:
+            print(f"[DEBUG] Screen stability SSIM={score:.3f}")
+
+        if score >= threshold:
+            return curr_frame  # stable
+
+        prev_frame = curr_frame
+
+    if debug:
+        print("[WARN] Timeout waiting for idle screen")
+    return None
 
 def reset_battle_state():
     with _lock:
