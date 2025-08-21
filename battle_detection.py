@@ -14,7 +14,7 @@ from PIL import Image
 # === CONFIG ===
 BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
 DATABASE_FOLDER = os.path.join("data", "pokemon_database")
-SHINY_MATCH_THRESHOLD = 0.81
+SHINY_MATCH_THRESHOLD = 0.95
 BATTLE_MATCH_THRESHOLD = 0.75
 SHAPE_MATCH_THRESHOLD = 0.9
 ANIMATION_DELAY = 2.0
@@ -26,7 +26,6 @@ _lock = threading.Lock()
 in_battle = False
 shiny_detected = False
 _battle_start_time = None
-_detection_complete = False
 _stop_thread = False
 _thread_counter = 0 
 
@@ -130,8 +129,91 @@ def capture_window(window_name: str):
     frame = np.array(im)[:, :, ::-1].copy()  # RGB → BGR
     return frame
 
+# === THREAD CONTROL ===
+def start_battle_detection(hwnd, interval, shiny_zone=None, shiny_event=None, not_shiny_event=None):
+    global _stop_thread, _thread_counter 
+    _stop_thread = False
+
+    def worker():
+        while not _stop_thread:
+            if _check_battle(hwnd, shiny_zone=shiny_zone, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
+                break
+            time.sleep(interval)
+
+    t = threading.Thread(
+        target=worker,
+        daemon=True,
+        name=f"battle-detector-{_thread_counter}"
+    )
+    t.start()
+    _thread_counter += 1
+    print(f"Thread object created: {t}, alive={t.is_alive()}")
+    return t
+
+# === BATTLE CHECK ===
+def _check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_event=None):
+    global in_battle, _battle_start_time
+    _detection_complete = False
+    now = time.time()
+    frame = capture_window(window_name)
+    if frame is None:
+        return False
+
+    battle = False
+    
+    for template in battle_templates:
+        target_h, target_w = frame.shape[:2]
+        template_resized = cv2.resize(template.img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        res = cv2.matchTemplate(frame, template_resized, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        if max_val > BATTLE_MATCH_THRESHOLD:
+            battle = True
+            break
+  
+    
+    if battle and _battle_start_time is None:
+        with _lock:
+            _battle_start_time = now
+            
+    if not battle and _battle_start_time is not None:
+        _battle_start_time = None
+
+    if battle and _battle_start_time and not _detection_complete:
+        if now - _battle_start_time >= ANIMATION_DELAY:
+            with _lock:
+                _detection_complete = True
+                _save_battle_frame(frame)
+                detector(frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
+
+    with _lock:
+        in_battle = battle
+
+    print(f"[STATUS] in_battle={in_battle}")
+    return 
+
+# === DETECTOR ===
+def detector(frame, zone="starter", shiny_event=None, not_shiny_event=None, debug=False):
+    zones = {
+        "starter": (60, frame.shape[0] - 335, 300, 165),
+        "enemy":   (450, frame.shape[0] - 450, 200, 150)
+    }
+    
+    if zone not in zones:
+        raise ValueError(f"[!] Unknown detection zone '{zone}'")
+
+    x, y, w, h = zones[zone]
+    detection_frame = np.ascontiguousarray(frame[y:y+h, x:x+w])
+    # print(f"[DEBUG] Using rectangle for zone '{zone}': x={x}, y={y}, w={w}, h={h}")
+    
+    mask_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
+    shape_folder = detect_shape(mask_frame, detection_frame, debug=False, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
+    color_folder = os.path.join(shape_folder, "color")
+    ensure_folder(color_folder)
+
+    return
+
 # === DETECT SHAPE ===
-def detect_shape(mask_frame, detection_frame, zone="starter", debug=False, shiny_event=None, not_shiny_event=None):
+def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=None, debug=True):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     enhanced = clahe.apply(mask_frame)
     _, alpha_mask = cv2.threshold(enhanced, 240, 255, cv2.THRESH_BINARY_INV)
@@ -161,7 +243,7 @@ def detect_shape(mask_frame, detection_frame, zone="starter", debug=False, shiny
                 print(f"[DEBUG] Comparing with {ref_path} -> match score {max_val:.3f}")
 
             if max_val >= SHAPE_MATCH_THRESHOLD:
-                if is_shiny(detection_frame, color_folder, debug, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
+                if is_shiny(detection_frame, color_folder, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
                     existing_shinies = sorted(os.listdir(shiny_folder))
                     if len(existing_shinies) < MAX_SCREENSHOTS_PER_SHAPE:
                         new_index = len(existing_shinies) + 1
@@ -213,116 +295,21 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
             print(f"[WARN] No valid reference images loaded from {color_folder}")
         return False
 
-    shiny_found = False
     for ref_file, ref_img in ref_images:
         score = ssim(detection_frame, ref_img, channel_axis=-1)
         if debug:
             print(f"[DEBUG] Comparing with {ref_file} -> SSIM: {score:.3f}")
         if score < SHINY_MATCH_THRESHOLD:
             shiny_event.set()
-            shiny_found = True
         else:
             not_shiny_event.set()
 
-    return shiny_found
-
-# === DETECTOR ===
-def detector(frame, zone="starter", debug=True, shiny_event=None, not_shiny_event=None):
-    zones = {
-        "starter": (60, frame.shape[0] - 335, 300, 165),
-        "enemy":   (450, frame.shape[0] - 450, 200, 150)
-    }
-    
-    if zone not in zones:
-        raise ValueError(f"[!] Unknown detection zone '{zone}'")
-
-    x, y, w, h = zones[zone]
-    detection_frame = np.ascontiguousarray(frame[y:y+h, x:x+w])
-    # print(f"[DEBUG] Using rectangle for zone '{zone}': x={x}, y={y}, w={w}, h={h}")
-    
-    mask_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
-
-    shape_folder = detect_shape(mask_frame, detection_frame, zone=zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
-
-
-    color_folder = os.path.join(shape_folder, "color")
-    ensure_folder(color_folder)
-
     return
 
-# === BATTLE CHECK ===
-def _check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_event=None):
-    global in_battle, _battle_start_time, _detection_complete
-
-    now = time.time()
-    frame = capture_window(window_name)
-    if frame is None:
-        return False
-
-    battle = False
-    
-    for template in battle_templates:
-        target_h, target_w = frame.shape[:2]
-        template_resized = cv2.resize(template.img, (target_w, target_h), interpolation=cv2.INTER_AREA)
-        res = cv2.matchTemplate(frame, template_resized, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        if max_val > BATTLE_MATCH_THRESHOLD:
-            battle = True
-            break
-  
-    
-    if battle and _battle_start_time is None:
-        with _lock:
-            _battle_start_time = now
-            
-    if not battle and _battle_start_time is not None:
-        _battle_start_time = None
-
-    if battle and _battle_start_time and not _detection_complete:
-        if now - _battle_start_time >= ANIMATION_DELAY:
-            with _lock:
-                _detection_complete = True
-                _save_battle_frame(frame)
-                detector(frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
-
-    with _lock:
-        in_battle = battle
-
-    print(f"[STATUS] in_battle={in_battle}")
-    return _detection_complete
-
-# === THREAD CONTROL ===
-def start_battle_detection(hwnd, interval=1.0, shiny_zone=None, shiny_event=None, not_shiny_event=None):
-    global _stop_thread, _detection_complete, _thread_counter 
-    _stop_thread = False
-    _detection_complete = False
-
-
-    def worker():
-        while not _stop_thread:
-            if _check_battle(hwnd, shiny_zone=shiny_zone, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
-                break
-            time.sleep(interval)
-
-    t = threading.Thread(
-        target=worker,
-        daemon=True,
-        name=f"battle-detector-{_thread_counter}"
-    )
-    t.start()
-    _thread_counter += 1
-    print(f"Thread object created: {t}, alive={t.is_alive()}")
-    return t
-
-def get_battle_state():
-    with _lock:
-        return in_battle
-    
 def reset_battle_state():
-    global in_battle, _detection_complete
+    global in_battle
     with _lock:
         in_battle = False
-        _detection_complete = False
     
 def stop_detection():
     global _stop_thread

@@ -1,7 +1,7 @@
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection, stop_detection, get_battle_state, reset_battle_state
+from battle_detection import start_battle_detection, stop_detection, in_battle
 
 
 VK = {
@@ -29,24 +29,25 @@ def press_key(hwnd, key, duration=0.1):
     vk = VK.get(key.upper())
     if vk is None:
         raise ValueError(f"Unknown key {key}")
-    print(f"[INPUT] Pressing {key} for {duration}s")
+    # print(f"[INPUT] Pressing {key} for {duration}s")
     win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
     time.sleep(duration)
     win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
 
 def press_sequence(hwnd, sequence):
-    print(f"[SEQUENCE] Starting sequence: {sequence}")
+    # print(f"[SEQUENCE] Starting sequence: {sequence}")
     for key, dur in sequence:
         if key.upper() == "WAIT":
             print(f"[WAIT] {dur}s")
             time.sleep(dur)
         else:
             press_key(hwnd, key, dur)
-    print(f"[SEQUENCE] Finished sequence: {sequence}")
+    # print(f"[SEQUENCE] Finished sequence: {sequence}")
 
 
 def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
+    global in_battle
     print("[INFO] Starting random shiny hunt loop")
 
     while True:
@@ -62,7 +63,7 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
         # Move around until a battle starts
         print("[LOOP] Searching for battle...")
-        while not get_battle_state():
+        while not in_battle:
             press_sequence(hwnd, SEQUENCE_ENCOUNTER)
  
         while thread.is_alive():
@@ -79,7 +80,7 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
         else:
             print("[INFO] No shiny detected, fleeing...")
             press_sequence(hwnd, SEQUENCE_FLEE)
-            reset_battle_state()
+
             
         stop_detection()
         not_shiny_event.set()  
