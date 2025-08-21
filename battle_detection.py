@@ -3,10 +3,11 @@ import numpy as np
 import threading
 import time
 import os
-from skimage.metrics import structural_similarity as ssim
-from ctypes import windll
 import win32gui
 import win32ui
+import config
+from skimage.metrics import structural_similarity as ssim
+from ctypes import windll
 from PIL import Image
 
 #battle_detection.py
@@ -14,7 +15,7 @@ from PIL import Image
 # === CONFIG ===
 BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
 DATABASE_FOLDER = os.path.join("data", "pokemon_database")
-SHINY_MATCH_THRESHOLD = 0.95
+SHINY_MATCH_THRESHOLD = 1
 BATTLE_MATCH_THRESHOLD = 0.75
 SHAPE_MATCH_THRESHOLD = 0.9
 ANIMATION_DELAY = 2.0
@@ -23,9 +24,7 @@ WINDOW_NAME = "mGBA - Pokemon"
 
 # === STATE ===
 _lock = threading.Lock()
-in_battle = False
 shiny_detected = False
-_battle_start_time = None
 _stop_thread = False
 _thread_counter = 0 
 
@@ -152,14 +151,13 @@ def start_battle_detection(hwnd, interval, shiny_zone=None, shiny_event=None, no
 
 # === BATTLE CHECK ===
 def _check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_event=None):
-    global in_battle, _battle_start_time
+    _battle_start_time = False
     _detection_complete = False
     now = time.time()
     frame = capture_window(window_name)
     if frame is None:
         return False
 
-    battle = False
     
     for template in battle_templates:
         target_h, target_w = frame.shape[:2]
@@ -167,28 +165,25 @@ def _check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny
         res = cv2.matchTemplate(frame, template_resized, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > BATTLE_MATCH_THRESHOLD:
-            battle = True
+            config.in_battle = True
             break
   
     
-    if battle and _battle_start_time is None:
+    if config.in_battle and not _battle_start_time:
         with _lock:
             _battle_start_time = now
             
-    if not battle and _battle_start_time is not None:
+    if not config.in_battle and _battle_start_time is not None:
         _battle_start_time = None
-
-    if battle and _battle_start_time and not _detection_complete:
-        if now - _battle_start_time >= ANIMATION_DELAY:
-            with _lock:
-                _detection_complete = True
-                _save_battle_frame(frame)
-                detector(frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
-
-    with _lock:
-        in_battle = battle
-
-    print(f"[STATUS] in_battle={in_battle}")
+        
+    if config.in_battle and _battle_start_time and not _detection_complete:
+        time.sleep(3.0)
+        with _lock:
+            _detection_complete = True
+            _save_battle_frame(frame)
+            detector(frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
+    print(f"_battle_start_time {_battle_start_time} _detection_complete {_detection_complete} ")
+    print(f"[STATUS] in_battle={config.in_battle}")
     return 
 
 # === DETECTOR ===
@@ -206,14 +201,14 @@ def detector(frame, zone="starter", shiny_event=None, not_shiny_event=None, debu
     # print(f"[DEBUG] Using rectangle for zone '{zone}': x={x}, y={y}, w={w}, h={h}")
     
     mask_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
-    shape_folder = detect_shape(mask_frame, detection_frame, debug=False, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
+    shape_folder = detect_shape(mask_frame, detection_frame, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
     color_folder = os.path.join(shape_folder, "color")
     ensure_folder(color_folder)
 
     return
 
 # === DETECT SHAPE ===
-def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=None, debug=True):
+def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=None, debug=False):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     enhanced = clahe.apply(mask_frame)
     _, alpha_mask = cv2.threshold(enhanced, 240, 255, cv2.THRESH_BINARY_INV)
@@ -250,7 +245,6 @@ def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=
                         save_frame(os.path.join(shiny_folder, f"{new_index}.png"), detection_frame, debug)
                 else:
                     existing_colors = sorted(os.listdir(color_folder))
-                    not_shiny_event.set()
                     if len(existing_colors) < MAX_SCREENSHOTS_PER_SHAPE:
                         new_index = len(existing_colors) + 1
                         save_frame(os.path.join(color_folder, f"{new_index}.png"), detection_frame, debug)
@@ -278,6 +272,7 @@ def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=
 
 # === SHINY DETECTION ===
 def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event):
+    shiny_found = False
     if not os.path.exists(color_folder) or len(os.listdir(color_folder)) == 0:
         if debug:
             print(f"[WARN] No reference images found in {color_folder}")
@@ -301,15 +296,15 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
             print(f"[DEBUG] Comparing with {ref_file} -> SSIM: {score:.3f}")
         if score < SHINY_MATCH_THRESHOLD:
             shiny_event.set()
+            shiny_found = True
         else:
             not_shiny_event.set()
 
-    return
+    return shiny_found
 
 def reset_battle_state():
-    global in_battle
     with _lock:
-        in_battle = False
+        config.in_battle = False
     
 def stop_detection():
     global _stop_thread

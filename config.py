@@ -1,0 +1,1 @@
+in_battle = False

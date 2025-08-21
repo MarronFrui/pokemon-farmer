@@ -1,7 +1,8 @@
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection, stop_detection, in_battle
+from battle_detection import start_battle_detection, stop_detection
+import config
 
 
 VK = {
@@ -20,7 +21,7 @@ SEQUENCE_ENCOUNTER = [
 ]
 
 SEQUENCE_FLEE = [
-    ('A', 0.1), ('WAIT', 2.0), ('RIGHT', 0.1), ('DOWN', 0.1),
+    ('A', 0.1), ('WAIT', 4.0), ('RIGHT', 0.1), ('DOWN', 0.1),
     ('A', 0.1), ('WAIT', 1.0), ('A', 0.1)
 ]
 
@@ -47,7 +48,7 @@ def press_sequence(hwnd, sequence):
 
 
 def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
-    global in_battle
+
     print("[INFO] Starting random shiny hunt loop")
 
     while True:
@@ -60,10 +61,9 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
             hwnd, interval=2.0, shiny_zone="enemy",
             shiny_event=shiny_event, not_shiny_event=not_shiny_event
         )
-
         # Move around until a battle starts
         print("[LOOP] Searching for battle...")
-        while not in_battle:
+        while not config.in_battle:
             press_sequence(hwnd, SEQUENCE_ENCOUNTER)
  
         while thread.is_alive():
@@ -77,16 +77,12 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
         if shiny_event.is_set():
             print("[ALERT] Shiny detected! Exiting farming loop.")
             return
-        else:
+        if not_shiny_event.is_set():
             print("[INFO] No shiny detected, fleeing...")
             press_sequence(hwnd, SEQUENCE_FLEE)
+            config.in_battle = False
 
-            
-        stop_detection()
-        not_shiny_event.set()  
-
-        
-        
         # Small pause before next encounter loop
         print("[LOOP] Battle ended. Preparing next encounter...")
+        time.sleep(4.0)
  
