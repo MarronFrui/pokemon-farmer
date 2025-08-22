@@ -17,7 +17,7 @@ BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
 DATABASE_FOLDER = os.path.join("data", "pokemon_database")
 SHINY_MATCH_THRESHOLD = 1
 BATTLE_MATCH_THRESHOLD = 0.75
-SHAPE_MATCH_THRESHOLD = 0.9
+SHAPE_MATCH_THRESHOLD = 0.95
 ANIMATION_DELAY = 2.0
 MAX_SCREENSHOTS_PER_SHAPE = 10
 WINDOW_NAME = "mGBA - Pokemon"
@@ -168,6 +168,8 @@ def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_
             config.in_battle = True
             time.sleep(2.5)
             break
+        if max_val < BATTLE_MATCH_THRESHOLD:
+            config.in_battle = False
   
     
     if config.in_battle and not config.battle_start_time:
@@ -305,7 +307,7 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
 
     return shiny_found
 
-def wait_for_idle(hwnd, timeout=5.0, check_interval=0.2, threshold=0.99, debug=False):
+def wait_for_idle(hwnd, timeout=7.0, check_interval=0.2, threshold=1, stable_count=2, debug=False):
     """
     Wait until the window's screen is visually stable (idle).
     Returns the last stable frame (BGR NumPy array), or None if timeout.
@@ -314,6 +316,8 @@ def wait_for_idle(hwnd, timeout=5.0, check_interval=0.2, threshold=0.99, debug=F
     prev_frame = np.array(screenshot(hwnd))[:, :, ::-1].copy()  # PrintWindow → RGB → BGR
     if prev_frame is None:
         return None
+
+    consecutive = 0  # how many stable checks in a row
 
     while time.time() - start < timeout:
         time.sleep(check_interval)
@@ -324,10 +328,14 @@ def wait_for_idle(hwnd, timeout=5.0, check_interval=0.2, threshold=0.99, debug=F
 
         score = ssim(prev_frame, curr_frame, channel_axis=-1)
         if debug:
-            print(f"[DEBUG] Screen stability SSIM={score:.3f}")
+            print(f"[DEBUG] Screen stability SSIM={score:.3f} (consecutive={consecutive})")
 
         if score >= threshold:
-            return curr_frame  # stable
+            consecutive += 1
+            if consecutive >= stable_count:
+                return curr_frame  # stable enough
+        else:
+            consecutive = 0  # reset if unstable
 
         prev_frame = curr_frame
 

@@ -17,11 +17,14 @@ VK = {
 
 # movement sequences
 SEQUENCE_ENCOUNTER = [
-    ('UP', 0.05), ('LEFT', 0.05), ('DOWN', 0.05), ('RIGHT', 0.05)
+    ('UP', 0.05), ('WAIT', 0.1),
+    ('DOWN', 0.05), ('WAIT', 0.1),
+    ('RIGHT', 0.05), ('WAIT', 0.1),
+    ('LEFT', 0.05), ('WAIT', 0.1)
 ]
 
 SEQUENCE_FLEE = [
-    ('A', 0.1), ('WAIT', 4.0), ('RIGHT', 0.1), ('DOWN', 0.1),
+    ('A', 0.5), ('WAIT', 4.0), ('RIGHT', 0.5), ('DOWN', 0.1),
     ('A', 0.1), ('WAIT', 1.0), ('A', 0.1)
 ]
 
@@ -40,7 +43,6 @@ def press_sequence(hwnd, sequence):
     # print(f"[SEQUENCE] Starting sequence: {sequence}")
     for key, dur in sequence:
         if key.upper() == "WAIT":
-            print(f"[WAIT] {dur}s")
             time.sleep(dur)
         else:
             press_key(hwnd, key, dur)
@@ -58,7 +60,7 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
         # Start battle detection immediately
         thread = start_battle_detection(
-            hwnd, interval=2.5, shiny_zone="enemy",
+            hwnd, interval=2.0, shiny_zone="enemy",
             shiny_event=shiny_event, not_shiny_event=not_shiny_event
         )
         # Move around until a battle starts
@@ -79,10 +81,13 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
             return
         if not_shiny_event.is_set():
             print("[INFO] No shiny detected, fleeing...")
-            press_sequence(hwnd, SEQUENCE_FLEE)
-            config.in_battle = False
+            while config.in_battle is True:
+                config.in_battle = False
+                press_sequence(hwnd, SEQUENCE_FLEE)
+            
 
         # Small pause before next encounter loop
         print("[LOOP] Battle ended. Preparing next encounter...")
+        config.in_battle = False
         time.sleep(4.0)
  
