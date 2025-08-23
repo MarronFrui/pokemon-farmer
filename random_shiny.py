@@ -3,6 +3,7 @@ import win32api
 import win32con
 from battle_detection import start_battle_detection, stop_detection
 import config
+import threading
 
 
 VK = {
@@ -49,6 +50,7 @@ def press_sequence(hwnd, sequence):
     # print(f"[SEQUENCE] Finished sequence: {sequence}")
 
 
+
 def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
     print("[INFO] Starting random shiny hunt loop")
@@ -60,7 +62,7 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
         # Start battle detection immediately
         thread = start_battle_detection(
-            hwnd, interval=2.0, shiny_zone="enemy",
+            hwnd, interval=1.0, shiny_zone="enemy",
             shiny_event=shiny_event, not_shiny_event=not_shiny_event
         )
         # Move around until a battle starts
@@ -70,24 +72,25 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
  
         while thread.is_alive():
             time.sleep(0.1)
-            if shiny_event.is_set() or not_shiny_event.is_set():
+            if shiny_event.is_set():
+                print("[ALERT] Shiny detected! Exiting farming loop.")
                 stop_detection()
                 thread.join()
                 break
 
-        # Handle the battle result
-        if shiny_event.is_set():
-            print("[ALERT] Shiny detected! Exiting farming loop.")
-            return
-        if not_shiny_event.is_set():
-            print("[INFO] No shiny detected, fleeing...")
-            while config.in_battle is True:
-                config.in_battle = False
-                press_sequence(hwnd, SEQUENCE_FLEE)
-            
+            if not_shiny_event.is_set():
+                print("[INFO] No shiny detected, fleeing...")
+                while config.in_battle:   # flee until detection flips in_battle = False
+                    press_sequence(hwnd, SEQUENCE_FLEE)
+                    time.sleep(3.0)
+
+                stop_detection()   # now it's safe to stop, battle is over
+                thread.join()
+                print("[INFO] Normal encounter ended. Restarting...")
+                break   
 
         # Small pause before next encounter loop
         print("[LOOP] Battle ended. Preparing next encounter...")
         config.in_battle = False
-        time.sleep(4.0)
+
  

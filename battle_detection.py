@@ -27,7 +27,7 @@ _lock = threading.Lock()
 shiny_detected = False
 _stop_thread = False
 _thread_counter = 0 
-
+_battle_status = threading.Condition()
 
 # === CLASSES ===
 class Template:
@@ -166,7 +166,7 @@ def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > BATTLE_MATCH_THRESHOLD:
             config.in_battle = True
-            time.sleep(2.5)
+            time.sleep(1.0)
             break
         if max_val < BATTLE_MATCH_THRESHOLD:
             config.in_battle = False
@@ -307,17 +307,19 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
 
     return shiny_found
 
-def wait_for_idle(hwnd, timeout=7.0, check_interval=0.2, threshold=1, stable_count=2, debug=False):
+def wait_for_idle(hwnd, timeout=3.0, check_interval=0.3, threshold=0.999, debug=False):
     """
-    Wait until the window's screen is visually stable (idle).
+    Wait until two consecutive frames are visually stable (idle).
     Returns the last stable frame (BGR NumPy array), or None if timeout.
     """
     start = time.time()
-    prev_frame = np.array(screenshot(hwnd))[:, :, ::-1].copy()  # PrintWindow → RGB → BGR
+    
+    prev_frame = screenshot(hwnd)
     if prev_frame is None:
         return None
+    prev_frame = np.array(prev_frame)[:, :, ::-1].copy()  # RGB → BGR
 
-    consecutive = 0  # how many stable checks in a row
+    consecutive_stable = 0
 
     while time.time() - start < timeout:
         time.sleep(check_interval)
@@ -327,15 +329,16 @@ def wait_for_idle(hwnd, timeout=7.0, check_interval=0.2, threshold=1, stable_cou
         curr_frame = np.array(curr)[:, :, ::-1].copy()
 
         score = ssim(prev_frame, curr_frame, channel_axis=-1)
+        score_rounded = round(score, 3)  # round to 3 decimals
         if debug:
-            print(f"[DEBUG] Screen stability SSIM={score:.3f} (consecutive={consecutive})")
+            print(f"[DEBUG] Screen stability SSIM={score_rounded:.3f} (consecutive={consecutive_stable})")
 
-        if score >= threshold:
-            consecutive += 1
-            if consecutive >= stable_count:
-                return curr_frame  # stable enough
+        if score_rounded >= threshold:
+            consecutive_stable += 1
+            if consecutive_stable >= 2:  # require two consecutive stable frames
+                return curr_frame
         else:
-            consecutive = 0  # reset if unstable
+            consecutive_stable = 0
 
         prev_frame = curr_frame
 
@@ -351,3 +354,4 @@ def stop_detection():
     global _stop_thread
     _stop_thread = True
     time.sleep(0.1)
+
