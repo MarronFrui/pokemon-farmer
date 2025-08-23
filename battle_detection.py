@@ -186,12 +186,12 @@ def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_
             with _lock:
                 config.detection_complete = True
                 save_battle_frame(idle_frame)
-                detector(idle_frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
+                zone_handler(idle_frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
     print(f"[STATUS] in_battle={config.in_battle}")
     return 
 
-# === DETECTOR ===
-def detector(frame, zone="starter", shiny_event=None, not_shiny_event=None, debug=False):
+# === ZONE_HANDLER ===
+def zone_handler(frame, zone="starter", shiny_event=None, not_shiny_event=None, debug=False):
     zones = {
         "starter": (60, frame.shape[0] - 335, 300, 165),
         "enemy":   (450, frame.shape[0] - 450, 200, 150)

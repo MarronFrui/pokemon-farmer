@@ -1,9 +1,9 @@
 from window_capture import find_window_by_title  # hwnd for inputs
 from battle_detection import screenshot          # frames for vision
-from shiny_starter_farming import farm_shiny_starters
+from shiny_starter_farming import Unique_encouters
 from random_shiny import random_shiny_hunt
 from botmenu import show_menu
-from shiny_starter_farming import farm_shiny_starters
+from shiny_starter_farming import Unique_encouters
 import threading
 
 
@@ -20,7 +20,7 @@ def main():
     
     # start module
     if choice == "1":
-        farm_shiny_starters(hwnd, shiny_event, not_shiny_event)
+        Unique_encouters(hwnd, shiny_event, not_shiny_event)
     elif choice == "2":
         random_shiny_hunt(hwnd, shiny_event, not_shiny_event)
     else:

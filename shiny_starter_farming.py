@@ -73,7 +73,7 @@ def press_multiple(hwnd, keys, duration=0.2):
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
 # === MAIN FARMING LOOP ===
-def farm_shiny_starters(hwnd, shiny_event, not_shiny_event):
+def Unique_encouters(hwnd, shiny_event, not_shiny_event):
     print("[INFO] Starting shiny starter farming...")
 
     while True:
