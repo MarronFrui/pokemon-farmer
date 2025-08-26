@@ -27,7 +27,6 @@ _lock = threading.Lock()
 shiny_detected = False
 _stop_thread = False
 _thread_counter = 0 
-_battle_status = threading.Condition()
 
 # === CLASSES ===
 class Template:
@@ -166,7 +165,6 @@ def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > BATTLE_MATCH_THRESHOLD:
             config.in_battle = True
-            time.sleep(1.0)
             break
         if max_val < BATTLE_MATCH_THRESHOLD:
             config.in_battle = False

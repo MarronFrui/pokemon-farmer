@@ -24,9 +24,13 @@ SEQUENCE_ENCOUNTER = [
     ('LEFT', 0.05), ('WAIT', 0.1)
 ]
 
+SEQUENCE_A_BUTTON = [
+    ('A', 0.5), ('WAIT', 4.0)
+]
+
 SEQUENCE_FLEE = [
-    ('A', 0.5), ('WAIT', 4.0), ('RIGHT', 0.5), ('DOWN', 0.1),
-    ('A', 0.1), ('WAIT', 1.0), ('A', 0.1)
+    ('RIGHT', 0.1), ('DOWN', 0.1),
+    ('A', 0.1), ('WAIT', 0.75), ('A', 0.1)
 ]
 
 
@@ -80,6 +84,7 @@ def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
             if not_shiny_event.is_set():
                 print("[INFO] No shiny detected, fleeing...")
+                press_sequence(hwnd, SEQUENCE_A_BUTTON)
                 while config.in_battle:   # flee until detection flips in_battle = False
                     press_sequence(hwnd, SEQUENCE_FLEE)
                     time.sleep(3.0)
