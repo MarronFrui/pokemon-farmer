@@ -1,0 +1,8 @@
+# Ignore build artifacts
+/dist/
+/build/
+/__pycache__/
+/*.spec
+
+# Ignore your data folder
+/data/

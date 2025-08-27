@@ -26,7 +26,6 @@ WINDOW_NAME = "mGBA - Pokemon"
 _lock = threading.Lock()
 shiny_detected = False
 _stop_thread = False
-_thread_counter = 0 
 
 # === CLASSES ===
 class Template:
@@ -54,7 +53,7 @@ def ensure_folder(*paths):
 def save_frame(path, frame, debug=None):
     cv2.imwrite(path, frame)
     if debug:
-        print(f"[DEBUG] Saved frame -> {path}")
+        config.log_print(f"[DEBUG] Saved frame -> {path}")
 
 battle_templates = load_templates(BATTLE_TEMPLATES_FOLDER)
 
@@ -119,7 +118,7 @@ def save_battle_frame(frame, limit=200, folder=BATTLE_TEMPLATES_FOLDER):
 
     filename = os.path.join(folder, f"battle_{new_index:03d}.png")
     cv2.imwrite(filename, frame)
-    print(f"[DEBUG] Saved new battle template -> {filename}")
+    config.log_print(f"[DEBUG] Saved new battle template -> {filename}")
 
 def capture_window(window_name: str):
     im = screenshot(window_name)
@@ -130,11 +129,12 @@ def capture_window(window_name: str):
 
 # === THREAD CONTROL ===
 def start_battle_detection(hwnd, interval, shiny_zone=None, shiny_event=None, not_shiny_event=None):
-    global _stop_thread, _thread_counter 
+    global _stop_thread
     _stop_thread = False
 
     def worker():
         while not _stop_thread:
+                
             if check_battle(hwnd, shiny_zone=shiny_zone, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
                 break
             time.sleep(interval)
@@ -142,11 +142,11 @@ def start_battle_detection(hwnd, interval, shiny_zone=None, shiny_event=None, no
     t = threading.Thread(
         target=worker,
         daemon=True,
-        name=f"battle-detector-{_thread_counter}"
+        name=f"battle-detector-{config.thread_counter}"
     )
     t.start()
-    _thread_counter += 1
-    print(f"Thread object created: {t}, alive={t.is_alive()}")
+    config.thread_counter += 1
+    config.log_print(f"Thread object created: {t}, alive={t.is_alive()}")
     return t
 
 # === BATTLE CHECK ===
@@ -185,7 +185,7 @@ def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_
                 config.detection_complete = True
                 save_battle_frame(idle_frame)
                 zone_handler(idle_frame, zone=shiny_zone, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
-    print(f"[STATUS] in_battle={config.in_battle}")
+    config.log_print(f"[STATUS] in_battle={config.in_battle}")
     return 
 
 # === ZONE_HANDLER ===
@@ -200,7 +200,7 @@ def zone_handler(frame, zone="starter", shiny_event=None, not_shiny_event=None, 
 
     x, y, w, h = zones[zone]
     detection_frame = np.ascontiguousarray(frame[y:y+h, x:x+w])
-    # print(f"[DEBUG] Using rectangle for zone '{zone}': x={x}, y={y}, w={w}, h={h}")
+    # config.log_print(f"[DEBUG] Using rectangle for zone '{zone}': x={x}, y={y}, w={w}, h={h}")
     
     mask_frame = cv2.cvtColor(detection_frame, cv2.COLOR_BGR2GRAY)
     shape_folder = detect_shape(mask_frame, detection_frame, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event)
@@ -237,7 +237,7 @@ def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=
             res = cv2.matchTemplate(alpha_mask, ref_img, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(res)
             if debug:
-                print(f"[DEBUG] Comparing with {ref_path} -> match score {max_val:.3f}")
+                config.log_print(f"[DEBUG] Comparing with {ref_path} -> match score {max_val:.3f}")
 
             if max_val >= SHAPE_MATCH_THRESHOLD:
                 if is_shiny(detection_frame, color_folder, debug=True, shiny_event=shiny_event, not_shiny_event=not_shiny_event):
@@ -268,7 +268,7 @@ def detect_shape(mask_frame, detection_frame, shiny_event=None, not_shiny_event=
     save_frame(os.path.join(mask_folder, "ref.png"), alpha_mask, debug)
     save_frame(os.path.join(color_folder, "1.png"), detection_frame, debug)
     if debug:
-        print(f"[DEBUG] Detected new unique shape -> {shape_folder}")
+        config.log_print(f"[DEBUG] Detected new unique shape -> {shape_folder}")
     not_shiny_event.set()
 
     return shape_folder
@@ -278,7 +278,7 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
     shiny_found = False
     if not os.path.exists(color_folder) or len(os.listdir(color_folder)) == 0:
         if debug:
-            print(f"[WARN] No reference images found in {color_folder}")
+            config.log_print(f"[WARN] No reference images found in {color_folder}")
         return False
 
     ref_images = []
@@ -290,13 +290,13 @@ def is_shiny(detection_frame, color_folder, debug, shiny_event, not_shiny_event)
 
     if len(ref_images) == 0:
         if debug:
-            print(f"[WARN] No valid reference images loaded from {color_folder}")
+            config.log_print(f"[WARN] No valid reference images loaded from {color_folder}")
         return False
 
     for ref_file, ref_img in ref_images:
         score = ssim(detection_frame, ref_img, channel_axis=-1)
         if debug:
-            print(f"[DEBUG] Comparing with {ref_file} -> SSIM: {score:.3f}")
+            config.log_print(f"[DEBUG] Comparing with {ref_file} -> SSIM: {score:.3f}")
         if score < SHINY_MATCH_THRESHOLD:
             shiny_event.set()
             shiny_found = True
@@ -329,7 +329,7 @@ def wait_for_idle(hwnd, timeout=3.0, check_interval=0.3, threshold=0.999, debug=
         score = ssim(prev_frame, curr_frame, channel_axis=-1)
         score_rounded = round(score, 3)  # round to 3 decimals
         if debug:
-            print(f"[DEBUG] Screen stability SSIM={score_rounded:.3f} (consecutive={consecutive_stable})")
+            config.log_print(f"[DEBUG] Screen stability SSIM={score_rounded:.3f} (consecutive={consecutive_stable})")
 
         if score_rounded >= threshold:
             consecutive_stable += 1
@@ -341,7 +341,7 @@ def wait_for_idle(hwnd, timeout=3.0, check_interval=0.3, threshold=0.999, debug=
         prev_frame = curr_frame
 
     if debug:
-        print("[WARN] Timeout waiting for idle screen")
+        config.log_print("[WARN] Timeout waiting for idle screen")
     return None
 
 def reset_battle_state():

@@ -1,9 +1,8 @@
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection, stop_detection
 import config
-import threading
+from battle_detection import start_battle_detection, stop_detection
 
 
 VK = {
@@ -16,7 +15,6 @@ VK = {
     'RESET': win32con.VK_F1
 }
 
-# movement sequences
 SEQUENCE_ENCOUNTER = [
     ('UP', 0.05), ('WAIT', 0.1),
     ('DOWN', 0.05), ('WAIT', 0.1),
@@ -37,65 +35,64 @@ SEQUENCE_FLEE = [
 def press_key(hwnd, key, duration=0.1):
     vk = VK.get(key.upper())
     if vk is None:
-        raise ValueError(f"Unknown key {key}")
-    # print(f"[INPUT] Pressing {key} for {duration}s")
+        config.log_print(f"[WARN] Unknown key {key}")
+        return
     win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
     time.sleep(duration)
     win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
 
 def press_sequence(hwnd, sequence):
-    # print(f"[SEQUENCE] Starting sequence: {sequence}")
     for key, dur in sequence:
         if key.upper() == "WAIT":
             time.sleep(dur)
         else:
             press_key(hwnd, key, dur)
-    # print(f"[SEQUENCE] Finished sequence: {sequence}")
-
 
 
 def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
-    print("[INFO] Starting random shiny hunt loop")
+    config.log_print("[INFO] Starting random shiny hunt loop")
 
-    while True:
-        # Clear events for this encounter
+    while not config.stop_program:
         shiny_event.clear()
         not_shiny_event.clear()
 
-        # Start battle detection immediately
+        # Start battle detection
         thread = start_battle_detection(
             hwnd, interval=1.0, shiny_zone="enemy",
             shiny_event=shiny_event, not_shiny_event=not_shiny_event
         )
-        # Move around until a battle starts
-        print("[LOOP] Searching for battle...")
+
+        config.log_print("[LOOP] Searching for battle...")
         while not config.in_battle:
             press_sequence(hwnd, SEQUENCE_ENCOUNTER)
- 
+
         while thread.is_alive():
             time.sleep(0.1)
+
             if shiny_event.is_set():
-                print("[ALERT] Shiny detected! Exiting farming loop.")
+                config.log_print("[ALERT] Shiny detected! Exiting farming loop.")
                 stop_detection()
                 thread.join()
+                config.stop_program = True
                 break
 
             if not_shiny_event.is_set():
-                print("[INFO] No shiny detected, fleeing...")
+                config.log_print("[INFO] No shiny detected, fleeing...")
                 press_sequence(hwnd, SEQUENCE_A_BUTTON)
-                while config.in_battle:   # flee until detection flips in_battle = False
+                while config.in_battle:
                     press_sequence(hwnd, SEQUENCE_FLEE)
                     time.sleep(3.0)
 
-                stop_detection()   # now it's safe to stop, battle is over
+                stop_detection()
                 thread.join()
-                print("[INFO] Normal encounter ended. Restarting...")
-                break   
+                config.log_print("[INFO] Normal encounter ended. Restarting...")
+                break
 
-        # Small pause before next encounter loop
-        print("[LOOP] Battle ended. Preparing next encounter...")
+        config.log_print("[LOOP] Battle ended. Preparing next encounter...")
         config.in_battle = False
 
- 
+    config.running_mode = None
+    stop_detection()
+    config.log_print("[INFO] Farming loop fully stopped.")

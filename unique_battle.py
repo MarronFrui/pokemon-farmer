@@ -2,16 +2,17 @@
 import time
 import win32api
 import win32con
-from battle_detection import start_battle_detection, stop_detection
 import random
 import time
+import config
+from battle_detection import start_battle_detection, stop_detection
 
 
 
 # === KEY MAPPING ===
 VK = {
-    'A': 0x58,        # X
-    'B': 0x5A,        # Z
+    'A': 0x57,  # W
+    'B': 0x58,  # X
     'SELECT': 0x56,   # V
     'START': 0x42,    # B
     'UP': win32con.VK_UP,
@@ -20,6 +21,11 @@ VK = {
     'RIGHT': win32con.VK_RIGHT,
 }
 
+#THIS FILE NEEDS TO BE REFACTORED. IT IS CLOSE ENOUGH TO A FULLY AUTOMATED SOFT RESET BOT
+#BUT NEEDS TO BE CHECKED AGAIN AFTER ALL THE NEW FEATURES
+#CONSIDER IT WIP
+
+#Add sleep to wait for the RNG to run a bit (Pokemon Emerald RNG is broken)
 min_interval = 0
 max_interval = 15
 wait = random.uniform(min_interval, max_interval)
@@ -73,38 +79,44 @@ def press_multiple(hwnd, keys, duration=0.2):
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
 # === MAIN FARMING LOOP ===
-def Unique_encouters(hwnd, shiny_event, not_shiny_event):
-    print("[INFO] Starting shiny starter farming...")
+def Unique_encounters(hwnd, shiny_event, not_shiny_event):
+    config.log_print("[INFO] Starting shiny starter farming...")
 
-    while True:
+    try:
+        while not config.stop_program:
+            # Trigger starter encounter
+            press_sequence(hwnd, SEQUENCE_STARTER)
 
-        # Trigger starter encounter
-        time.sleep(wait)
-        press_sequence(hwnd, SEQUENCE_STARTER)
+            shiny_event.clear()
+            not_shiny_event.clear()
+            thread = start_battle_detection(
+                hwnd, interval=2.0, shiny_zone="starter",
+                shiny_event=shiny_event, not_shiny_event=not_shiny_event
+            )
 
-        # Start battle detection thread
-        shiny_event.clear()
-        not_shiny_event.clear()
-        thread = start_battle_detection(hwnd, interval=2.0, shiny_zone="starter", shiny_event=shiny_event, not_shiny_event=not_shiny_event)
+            while thread.is_alive():
+                time.sleep(0.5)
 
-        # Monitor detection
-        while thread.is_alive():
-            
-            if not_shiny_event.is_set():
-                stop_detection()
-                thread.join()
-                print("[INFO] Normal encounter ended. Restarting...")
-                break
+                if not_shiny_event.is_set():
+                    stop_detection()
+                    thread.join()
+                    config.log_print("[INFO] Normal encounter ended. Restarting...")
+                    config.stop_program = True
+                    break
+
+                if shiny_event.is_set():
+                    stop_detection()
+                    thread.join()
+                    config.log_print("[ALERT] Shiny detected! Exiting farming loop.")
+                    config.running_mode = None
+                    return
+
+            # Restart combo for next attempt
+            press_multiple(hwnd, RESTART_FIRST, duration=2.0)
+            press_sequence(hwnd, RESTART_REST)
             time.sleep(0.5)
-        
-            if shiny_event.is_set():
-                stop_detection() 
-                thread.join()
-                print("[ALERT] Shiny detected! Exiting farming loop.")
-                return
-        
-        # Restart combo for next attempt
-        press_multiple(hwnd, RESTART_FIRST, duration=2.0)
-        press_sequence(hwnd, RESTART_REST)
-        time.sleep(0.5)
 
+    finally:
+        config.running_mode = None
+        stop_detection()
+        config.log_print("[INFO] Farming loop fully stopped.")
