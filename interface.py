@@ -1,17 +1,22 @@
 import customtkinter as ctk
 import threading
 import config
+import os
+import sys
 from window_capture import find_window_by_title
 from unique_battle import Unique_encounters
 from random_shiny import random_shiny_hunt
 from PIL import Image
-import os
 
 selected_mode = None
 
 # === Paths ===
-BASE_DIR = os.path.dirname(__file__)  # directory where interface.py lives
-IMG_DIR = os.path.join(BASE_DIR, "data", "bin")  # relative path to your icons
+if getattr(sys, "frozen", False):
+    BASE_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(__file__)
+
+IMG_DIR = os.path.join(BASE_DIR, "data", "bin")
 
 # Store references to images so they don't get garbage-collected
 button_images = {}

@@ -3,6 +3,7 @@ import numpy as np
 import threading
 import time
 import os
+import sys
 import win32gui
 import win32ui
 import config
@@ -13,8 +14,16 @@ from PIL import Image
 #battle_detection.py
 
 # === CONFIG ===
-BATTLE_TEMPLATES_FOLDER = os.path.join("data", "battle_templates")
-DATABASE_FOLDER = os.path.join("data", "pokemon_database")
+# Detect base folder (normal Python vs PyInstaller EXE)
+if getattr(sys, "frozen", False):
+    BASE_DIR = sys._MEIPASS  # PyInstaller unpack folder
+else:
+    BASE_DIR = os.path.dirname(__file__)
+
+# Use BASE_DIR for all data paths
+DATABASE_FOLDER = os.path.join(BASE_DIR, "data", "pokemon_database")
+BATTLE_TEMPLATES_FOLDER = os.path.join(BASE_DIR, "data", "battle_templates")
+IMG_DIR = os.path.join(BASE_DIR, "data", "bin")
 SHINY_MATCH_THRESHOLD = 1
 BATTLE_MATCH_THRESHOLD = 0.75
 SHAPE_MATCH_THRESHOLD = 0.95
@@ -96,7 +105,7 @@ def screenshot(window_ref):
         return None
     return im
 
-def save_battle_frame(frame, limit=200, folder=BATTLE_TEMPLATES_FOLDER):
+def save_battle_frame(frame, limit=50, folder=BATTLE_TEMPLATES_FOLDER):
     ensure_folder(folder)
 
     existing_files = sorted(os.listdir(folder))
