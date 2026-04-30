@@ -4,7 +4,8 @@ import mss
 import win32gui
 
 
-#window_capture.py
+# Development/debugging utilities — not part of the runtime capture pipeline
+# Used for visualizing capture regions and calibrating detection coordinates
 
 FRAME_INTERVAL_MS = 50
 
@@ -23,7 +24,7 @@ def find_window_by_title(substr: str):
     win32gui.EnumWindows(enum_handler, None)
     return hwnd
 
-def get_client_rect(hwnd):
+def debug_get_client_rect(hwnd):
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
     client_origin = win32gui.ClientToScreen(hwnd, (0, 0))
     left_s, top_s = client_origin
@@ -31,8 +32,8 @@ def get_client_rect(hwnd):
     height = bottom - top
     return left_s, top_s, left_s + width, top_s + height
 
-def capture_window(hwnd):
-    left, top, right, bottom = get_client_rect(hwnd)
+def debug_capture_window(hwnd):
+    left, top, right, bottom = debug_get_client_rect(hwnd)
     width, height = right - left, bottom - top
     if width <= 0 or height <= 0:
         return None
@@ -41,7 +42,7 @@ def capture_window(hwnd):
         img = np.array(sct.grab(monitor))[:, :, :3]
         return img
 
-def run(hwnd):
+def debug_preview_loop(hwnd):
     """
     Main loop for window capture and preview.
     """
@@ -53,7 +54,7 @@ def run(hwnd):
     # Worker thread for capturing frames
     def capture_worker():
         while not stop_event.is_set():
-            frame = capture_window(hwnd)
+            frame = debug_capture_window(hwnd)
             if frame is not None:
                 with frame_lock:
                     shared_frame["frame"] = frame

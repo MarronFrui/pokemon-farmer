@@ -2,7 +2,7 @@ import time
 import win32api
 import win32con
 import config
-from battle_detection import start_battle_detection, stop_detection
+from battle_detection import start_battle_detection, stop_detection, is_bag_open
 
 
 VK = {
@@ -50,11 +50,29 @@ def press_sequence(hwnd, sequence):
             press_key(hwnd, key, dur)
 
 
+def close_bag_if_open(hwnd):
+    if not is_bag_open(hwnd):
+        return
+
+    config.log_print("[INFO] Bag menu detected, closing...")
+    max_attempts = 10
+    for i in range(max_attempts):
+        press_key(hwnd, "B", duration=0.05)
+        time.sleep(0.3)
+        if not is_bag_open(hwnd):
+            config.log_print("[INFO] Bag menu closed")
+            return
+
+    config.log_print("[WARN] Could not close bag menu after max attempts")
+
+
 def random_shiny_hunt(hwnd, shiny_event, not_shiny_event):
 
     config.log_print("[INFO] Starting random shiny hunt loop")
 
     while not config.stop_program:
+        close_bag_if_open(hwnd)
+
         shiny_event.clear()
         not_shiny_event.clear()
 

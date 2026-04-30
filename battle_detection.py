@@ -23,9 +23,11 @@ else:
 # Use BASE_DIR for all data paths
 DATABASE_FOLDER = os.path.join(BASE_DIR, "data", "pokemon_database")
 BATTLE_TEMPLATES_FOLDER = os.path.join(BASE_DIR, "data", "battle_templates")
+BAG_TEMPLATES_FOLDER = os.path.join(BASE_DIR, "data", "bag_templates")
 IMG_DIR = os.path.join(BASE_DIR, "data", "bin")
 SHINY_MATCH_THRESHOLD = 1
 BATTLE_MATCH_THRESHOLD = 0.75
+BAG_MATCH_THRESHOLD = 0.85
 SHAPE_MATCH_THRESHOLD = 0.95
 ANIMATION_DELAY = 2.0
 MAX_SCREENSHOTS_PER_SHAPE = 10
@@ -65,6 +67,7 @@ def save_frame(path, frame, debug=None):
         config.log_print(f"[DEBUG] Saved frame -> {path}")
 
 battle_templates = load_templates(BATTLE_TEMPLATES_FOLDER)
+bag_templates = load_templates(BAG_TEMPLATES_FOLDER)
 
 # === WIN32 SCREENSHOT ===
 def screenshot(window_ref):
@@ -175,8 +178,8 @@ def check_battle(window_name, shiny_zone="starter", shiny_event=None, not_shiny_
         if max_val > BATTLE_MATCH_THRESHOLD:
             config.in_battle = True
             break
-        if max_val < BATTLE_MATCH_THRESHOLD:
-            config.in_battle = False
+    else:
+        config.in_battle = False
   
     
     if config.in_battle and not config.battle_start_time:
@@ -352,6 +355,25 @@ def wait_for_idle(hwnd, timeout=3.0, check_interval=0.3, threshold=0.999, debug=
     if debug:
         config.log_print("[WARN] Timeout waiting for idle screen")
     return None
+
+def is_bag_open(hwnd):
+    """
+    Check if the bag menu is currently open on screen.
+    Returns True if any bag template matches above the threshold.
+    """
+    frame = capture_window(hwnd)
+    if frame is None:
+        return False
+
+    for template in bag_templates:
+        target_h, target_w = frame.shape[:2]
+        template_resized = cv2.resize(template.img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        res = cv2.matchTemplate(frame, template_resized, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        if max_val > BAG_MATCH_THRESHOLD:
+            return True
+
+    return False
 
 def reset_battle_state():
     with _lock:

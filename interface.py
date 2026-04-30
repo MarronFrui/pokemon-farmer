@@ -3,7 +3,7 @@ import threading
 import config
 import os
 import sys
-from window_capture import find_window_by_title
+from debug_preview import find_window_by_title
 from unique_battle import Unique_encounters
 from random_shiny import random_shiny_hunt
 from PIL import Image
