@@ -23,10 +23,11 @@ SEQUENCE_ENCOUNTER = [
 ]
 
 SEQUENCE_A_BUTTON = [
-    ('A', 0.5), ('WAIT', 4.0)
+    ('A', 0.5), ('WAIT', 3.8)
 ]
 
 SEQUENCE_FLEE = [
+    ('WAIT', 0.4),
     ('RIGHT', 0.1), ('DOWN', 0.1),
     ('A', 0.1), ('WAIT', 0.75), ('A', 0.1)
 ]
